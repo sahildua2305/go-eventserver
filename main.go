@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+var currentEventSequence int
+
 // Event represents an event struct as received by the event source
 type Event struct {
 	payload    string //
@@ -28,6 +30,9 @@ type UserClient struct {
 func main() {
 	userConnsMap := make(map[int]UserClient)
 	followersMap := make(map[int]map[int]bool)
+	eventQueue := make(map[int]Event)
+
+	currentEventSequence = 1
 
 	es, err := net.Listen("tcp", ":9090")
 	if err != nil {
@@ -40,26 +45,36 @@ func main() {
 	defer es.Close()
 	defer uc.Close()
 
-	go acceptEventSourceConnections(es, userConnsMap, followersMap)
+	go acceptEventSourceConnections(es, userConnsMap, followersMap, eventQueue)
 	go acceptUserClientConnections(uc, userConnsMap)
 	time.Sleep(time.Hour)
 }
 
-func acceptEventSourceConnections(listener net.Listener, userConns map[int]UserClient, followersMap map[int]map[int]bool) {
+func acceptEventSourceConnections(listener net.Listener, userConns map[int]UserClient, followersMap map[int]map[int]bool, eventQueue map[int]Event) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			// handle error
 		}
 
+		r := bufio.NewReader(conn)
 		for {
-			message, _ := bufio.NewReader(conn).ReadString('\n')
+			message, _ := r.ReadString('\n')
 			message = strings.Trim(message, "\n")
 			message = strings.Trim(message, "\r")
-			//fmt.Println(message)
 			event, err := parseEvent(message)
-			if err == nil {
-				go processEvent(*event, userConns, followersMap)
+			if err != nil {
+				continue
+			}
+			eventQueue[event.sequence] = *event
+			for {
+				if e, ok := eventQueue[currentEventSequence]; ok {
+					delete(eventQueue, e.sequence)
+					processEvent(e, userConns, followersMap)
+					currentEventSequence++;
+				} else {
+					break
+				}
 			}
 		}
 	}
@@ -68,6 +83,8 @@ func acceptEventSourceConnections(listener net.Listener, userConns map[int]UserC
 func parseEvent(message string) (*Event, error) {
 	var event Event
 	var err error
+
+	event.payload = message
 	ev := strings.Split(message, "|")
 	if len(ev) < 2 || len(ev) > 4 {
 		return nil, errors.New("Invalid event message")
@@ -120,8 +137,9 @@ func processEvent(event Event, userConns map[int]UserClient, followersMap map[in
 			f = make(map[int]bool)
 		}
 		f[event.fromUserId] = true
+		followersMap[event.toUserId] = f
 		// send message to event.toUserId
-		go sendMessageToUser(event.payload, event.toUserId, userConns)
+		sendMessageToUser(event.payload, event.toUserId, userConns)
 	case "U":
 		// Unfollow event
 		f, exists := followersMap[event.toUserId]
@@ -132,17 +150,18 @@ func processEvent(event Event, userConns map[int]UserClient, followersMap map[in
 		// Broadcast message event
 		// send message to all connected user clients
 		for u := range userConns {
-			go sendMessageToUser(event.payload, u, userConns)
+			sendMessageToUser(event.payload, u, userConns)
 		}
 	case "P":
 		// Private message event
 		// send message to event.toUserId
-		go sendMessageToUser(event.payload, event.toUserId, userConns)
+		sendMessageToUser(event.payload, event.toUserId, userConns)
 	case "S":
 		// Status update event
 		for u := range followersMap[event.fromUserId] {
 			// send message to every follower
-			go sendMessageToUser(event.payload, u, userConns)
+
+			sendMessageToUser(event.payload, u, userConns)
 		}
 	default:
 		// Invalid event type
@@ -154,12 +173,15 @@ func sendMessageToUser(message string, uid int, userConns map[int]UserClient) {
 	uc, exists := userConns[uid]
 	if !exists {
 		// handle the error
+		return
 	}
-	w := bufio.NewWriter(uc.conn)
-	_, err := w.WriteString(message)
+
+	if uc.conn == nil {
+		return
+	}
+	_, err := uc.conn.Write([]byte(message+"\r\n"))
 	if err != nil {
-		// handle the error
-		fmt.Printf("Failed to write to %v", uid)
+		fmt.Printf("Unable to write to user %v\n", uid)
 	}
 }
 
@@ -173,7 +195,6 @@ func acceptUserClientConnections(listener net.Listener, userConns map[int]UserCl
 		message, _ := bufio.NewReader(conn).ReadString('\n')
 		message = strings.Trim(message, "\n")
 		message = strings.Trim(message, "\r")
-		//fmt.Println(message)
 		userId, _ := strconv.Atoi(message)
 		uc := UserClient{
 			userId: userId,
