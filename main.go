@@ -7,7 +7,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 )
 
 var currentEventSequence int
@@ -30,7 +29,7 @@ type UserClient struct {
 func main() {
 	userConnsMap := make(map[int]UserClient)
 	followersMap := make(map[int]map[int]bool)
-	eventQueue := make(map[int]Event)
+	eventsMap := make(map[int]Event)
 
 	currentEventSequence = 1
 
@@ -45,12 +44,11 @@ func main() {
 	defer es.Close()
 	defer uc.Close()
 
-	go acceptEventSourceConnections(es, userConnsMap, followersMap, eventQueue)
-	go acceptUserClientConnections(uc, userConnsMap)
-	time.Sleep(time.Hour)
+	go acceptEventSourceConnections(es, userConnsMap, followersMap, eventsMap)
+	acceptUserClientConnections(uc, userConnsMap)
 }
 
-func acceptEventSourceConnections(listener net.Listener, userConns map[int]UserClient, followersMap map[int]map[int]bool, eventQueue map[int]Event) {
+func acceptEventSourceConnections(listener net.Listener, userConns map[int]UserClient, followersMap map[int]map[int]bool, eventsMap map[int]Event) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -66,10 +64,10 @@ func acceptEventSourceConnections(listener net.Listener, userConns map[int]UserC
 			if err != nil {
 				continue
 			}
-			eventQueue[event.sequence] = *event
+			eventsMap[event.sequence] = *event
 			for {
-				if e, ok := eventQueue[currentEventSequence]; ok {
-					delete(eventQueue, e.sequence)
+				if e, ok := eventsMap[currentEventSequence]; ok {
+					delete(eventsMap, e.sequence)
 					processEvent(e, userConns, followersMap)
 					currentEventSequence++;
 				} else {
