@@ -1,0 +1,5 @@
+{
+  "logLevel": "DEBUG",
+  "eventListenerPort": 9090,
+  "clientListenerPort": 9099
+}

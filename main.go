@@ -7,13 +7,15 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"encoding/json"
+	"io/ioutil"
 )
 
 var currentEventSequence int
 
 // Event represents an event struct as received by the event source
 type Event struct {
-	payload    string //
+	payload    string
 	sequence   int
 	eventType  string
 	fromUserId int
@@ -26,26 +28,53 @@ type UserClient struct {
 	conn   net.Conn
 }
 
-func main() {
-	userConnsMap := make(map[int]UserClient)
-	followersMap := make(map[int]map[int]bool)
-	eventsMap := make(map[int]Event)
+// EventServerConfig represents the default configuration of the server
+type EventServerConfig struct {
+	LogLevel           string `json:"logLevel"`
+	EventListenerPort  int    `json:"eventListenerPort"`
+	ClientListenerPort int    `json:"clientListenerPort"`
+}
 
+func main() {
+	// TODO (sahildua2305): Fix this. Can we take it out of this?
 	currentEventSequence = 1
 
-	es, err := net.Listen("tcp", ":9090")
+	// Read server configuration from local config.json
+	config := loadDefaultJsonConfig("./config.json")
+
+	es, err := net.Listen("tcp", ":" + strconv.Itoa(config.EventListenerPort))
 	if err != nil {
 		// handle error
 	}
-	uc, err := net.Listen("tcp", ":9099")
+	uc, err := net.Listen("tcp", ":" + strconv.Itoa(config.ClientListenerPort))
 	if err != nil {
 		// handle error
 	}
 	defer es.Close()
 	defer uc.Close()
 
+	userConnsMap := make(map[int]UserClient)
+	followersMap := make(map[int]map[int]bool)
+	eventsMap := make(map[int]Event)
+
 	go acceptEventSourceConnections(es, userConnsMap, followersMap, eventsMap)
 	acceptUserClientConnections(uc, userConnsMap)
+}
+
+func loadDefaultJsonConfig(filePath string) EventServerConfig {
+	byteData, err := ioutil.ReadFile(filePath)
+	if err != nil {
+		// handle the error
+	}
+
+	var config EventServerConfig
+	// Here, we unmarshal our byteData which contains
+	// jsonFile's contents into 'config'.
+	err = json.Unmarshal(byteData, &config)
+	if err != nil {
+		// handle the error
+	}
+	return config
 }
 
 func acceptEventSourceConnections(listener net.Listener, userConns map[int]UserClient, followersMap map[int]map[int]bool, eventsMap map[int]Event) {
