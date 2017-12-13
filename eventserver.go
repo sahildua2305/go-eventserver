@@ -1,16 +1,16 @@
-package main
+package eventserver
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"strconv"
-	"strings"
-	"encoding/json"
 	"io/ioutil"
+	"net"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 )
 
 var currentEventSequence int
@@ -19,14 +19,14 @@ var currentEventSequence int
 type EventServer struct {
 	esListener net.Listener
 	ucListener net.Listener
-	running    bool
+	hasStopped bool
 	quit       chan struct{}
 }
 
 // EventServerConfig represents the default configuration of the server
 type EventServerConfig struct {
-	EventListenerPort  int    `json:"eventListenerPort"`
-	ClientListenerPort int    `json:"clientListenerPort"`
+	EventListenerPort  int `json:"eventListenerPort"`
+	ClientListenerPort int `json:"clientListenerPort"`
 }
 
 // Event represents an event struct as received by the event source
@@ -62,12 +62,12 @@ func startServer() (*EventServer, error) {
 		return nil, err
 	}
 
-	es, err := net.Listen("tcp", ":" + strconv.Itoa((*config).EventListenerPort))
+	es, err := net.Listen("tcp", ":"+strconv.Itoa((*config).EventListenerPort))
 	if err != nil {
 		// handle the error
 		return nil, err
 	}
-	uc, err := net.Listen("tcp", ":" + strconv.Itoa((*config).ClientListenerPort))
+	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*config).ClientListenerPort))
 	if err != nil {
 		// handle the error
 		return nil, err
@@ -76,7 +76,7 @@ func startServer() (*EventServer, error) {
 	go acceptEventSourceConnections(es, eventsChan)
 	go acceptUserClientConnections(uc, usersChan)
 
-	return &EventServer{esListener: es, ucListener: uc, running: true, quit: quit}, nil
+	return &EventServer{esListener: es, ucListener: uc, hasStopped: true, quit: quit}, nil
 }
 
 // Function to stop the running event server **gracefully**.
@@ -85,11 +85,11 @@ func startServer() (*EventServer, error) {
 // to all the running go routines to quit and also close the listeners for
 // the event source and the user clients.
 func (e *EventServer) stop() error {
-	if !e.running {
+	if !e.hasStopped {
 		return errors.New("event server has already been stopped")
 	}
 	close(e.quit) // close the quit channel
-	e.running = false
+	e.hasStopped = false
 	e.esListener.Close() // close the event source listener
 	e.ucListener.Close() // close the user clients listener
 	return nil
@@ -125,7 +125,7 @@ func loadDefaultJsonConfig(filePath string) (*EventServerConfig, error) {
 //
 // We need this handler function to avoid the race conditions between processing
 // the incoming events and the receiving new user clients.
-func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error){
+func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error) {
 	// Channel to keep incoming events.
 	eventsChan := make(chan Event)
 	// Channel to keep the incoming user clients.
@@ -173,20 +173,15 @@ func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error){
 				// Create a new channel for sending events for this user
 				userEventChan := make(chan Event, 1)
 
-				var ev Event
 				go func() {
 					for {
 						// Listen for either an Event on user's assigned Event channel
 						// or something on the quit channel.
 						select {
-						case ev = <-userEventChan:
+						case ev := <-userEventChan:
 							// If some event is received at the user's assigned Event
 							// channel, send it to the user client.
-							_, err := newUser.conn.Write([]byte(ev.payload+"\r\n"))
-							if err != nil {
-								// handle the error
-								fmt.Printf("Unable to write to user %v\n", newUser.userId)
-							}
+							writeEvent(newUser, ev)
 						case <-quit:
 							// If there's something sent on quit channel,
 							// end the routine.
@@ -210,18 +205,17 @@ func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error){
 				// as we have already received the events. We will stop as we find some
 				// sequence for which event is missing.
 				for {
-					if e, ok := eventsMap[currentEventSequence]; ok {
-						delete(eventsMap, e.sequence)
-						processEvent(e, userEventChannels, followersMap)
-						currentEventSequence++
-					} else {
+					e, ok := eventsMap[currentEventSequence]
+					if !ok {
 						break
 					}
+					delete(eventsMap, e.sequence)
+					processEvent(e, userEventChannels, followersMap)
+					currentEventSequence++
 				}
 			}
 		}
 	}()
-
 	return eventsChan, usersChan, nil
 }
 
@@ -231,10 +225,10 @@ func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error){
 func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event) {
 	for {
 		conn, err := listener.Accept()
+		defer conn.Close()
 		if err != nil {
 			// handle error
 		}
-		defer conn.Close()
 
 		// Once the event source has connected, start listening to the events
 		// in a go routine and perform these actions:
@@ -320,8 +314,7 @@ func parseEvent(message string) (*Event, error) {
 // to the user channels associated with the user clients which should be notified
 // for a particular event.
 func processEvent(event Event, userEventChannels map[int]chan Event, followersMap map[int]map[int]bool) {
-	et := event.eventType
-	switch et {
+	switch event.eventType {
 	case "F":
 		// Follow event
 		// Get the existing followers of the user.
@@ -369,6 +362,15 @@ func processEvent(event Event, userEventChannels map[int]chan Event, followersMa
 	}
 }
 
+// Writes a given event's payload to a given user's connection.
+func writeEvent(uc UserClient, ev Event) {
+	_, err := uc.conn.Write([]byte(ev.payload + "\r\n"))
+	if err != nil {
+		// handle the error
+		fmt.Printf("Unable to write to user %v\n", uc.userId)
+	}
+}
+
 // Accepts connection for new user clients and starts listening for their
 // first message in a go routine. The read message contains the userId of
 // the user a client represents. After a userId is read, the UserClient
@@ -376,10 +378,10 @@ func processEvent(event Event, userEventChannels map[int]chan Event, followersMa
 func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserClient) {
 	for {
 		conn, err := listener.Accept()
+		defer conn.Close()
 		if err != nil {
 			// handle error
 		}
-		defer conn.Close()
 
 		// Once a user client has connected, we go into a go routine to
 		// read the message from the client which will contain the userId
@@ -399,11 +401,10 @@ func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserCli
 				// handle the error
 				return
 			}
-			uc := UserClient{
+			usersChan <- UserClient{
 				userId: userId,
 				conn:   conn,
 			}
-			usersChan <- uc
 		}()
 	}
 }
@@ -417,13 +418,14 @@ func main() {
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt)
-	for _ = range signalChan {
-		err := es.stop()
-		if err != nil {
-			// handle the error
-			os.Exit(1)
-		}
-		signal.Stop(signalChan)
-		os.Exit(0)
+
+	// Wait for a signal on this channel.
+	<-signalChan
+	err = es.stop()
+	if err != nil {
+		// handle the error
+		os.Exit(1)
 	}
+	signal.Stop(signalChan)
+	os.Exit(0)
 }
