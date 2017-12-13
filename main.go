@@ -9,9 +9,25 @@ import (
 	"strings"
 	"encoding/json"
 	"io/ioutil"
+	"os"
+	"os/signal"
 )
 
 var currentEventSequence int
+
+// EventServer represents the server state
+type EventServer struct {
+	esListener net.Listener
+	ucListener net.Listener
+	running    bool
+	quit       chan struct{}
+}
+
+// EventServerConfig represents the default configuration of the server
+type EventServerConfig struct {
+	EventListenerPort  int    `json:"eventListenerPort"`
+	ClientListenerPort int    `json:"clientListenerPort"`
+}
 
 // Event represents an event struct as received by the event source
 type Event struct {
@@ -28,14 +44,7 @@ type UserClient struct {
 	conn   net.Conn
 }
 
-// EventServerConfig represents the default configuration of the server
-type EventServerConfig struct {
-	LogLevel           string `json:"logLevel"`
-	EventListenerPort  int    `json:"eventListenerPort"`
-	ClientListenerPort int    `json:"clientListenerPort"`
-}
-
-func main() {
+func startServer() (*EventServer, error) {
 	quit := make(chan struct{})
 
 	currentEventSequence = 1
@@ -44,26 +53,46 @@ func main() {
 	config, err := loadDefaultJsonConfig("./config.json")
 	if err != nil {
 		// handle the error
+		return nil, err
 	}
 
 	eventsChan, usersChan, err := handler(quit)
 	if err != nil {
 		// handle the error
+		return nil, err
 	}
 
 	es, err := net.Listen("tcp", ":" + strconv.Itoa((*config).EventListenerPort))
 	if err != nil {
-		// handle error
+		// handle the error
+		return nil, err
 	}
 	uc, err := net.Listen("tcp", ":" + strconv.Itoa((*config).ClientListenerPort))
 	if err != nil {
-		// handle error
+		// handle the error
+		return nil, err
 	}
-	defer es.Close()
-	defer uc.Close()
 
 	go acceptEventSourceConnections(es, eventsChan)
-	acceptUserClientConnections(uc, usersChan)
+	go acceptUserClientConnections(uc, usersChan)
+
+	return &EventServer{esListener: es, ucListener: uc, running: true, quit: quit}, nil
+}
+
+// Function to stop the running event server **gracefully**.
+// In case, the event server has already stopped, this will throw an error.
+// If server is running, it will close the quit channel, hence signalling
+// to all the running go routines to quit and also close the listeners for
+// the event source and the user clients.
+func (e *EventServer) stop() error {
+	if !e.running {
+		return errors.New("event server has already been stopped")
+	}
+	close(e.quit) // close the quit channel
+	e.running = false
+	e.esListener.Close() // close the event source listener
+	e.ucListener.Close() // close the user clients listener
+	return nil
 }
 
 func loadDefaultJsonConfig(filePath string) (*EventServerConfig, error) {
@@ -196,6 +225,9 @@ func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error){
 	return eventsChan, usersChan, nil
 }
 
+// Accepts connection for event source and starts listening for events
+// in a go routine. The read event is then sent to the events channel
+// created by handler() to process in correct order of sequence number.
 func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event) {
 	for {
 		conn, err := listener.Accept()
@@ -233,6 +265,9 @@ func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event
 	}
 }
 
+// Reads the event message string and parses it into Event struct.
+// Parse the payload and sequence first and then parse the fromUserId and
+// toUserId depending on the type of the event (F|U|B|P|S).
 // TODO (sahildua2305): add better error handling for invalid event messages.
 func parseEvent(message string) (*Event, error) {
 	var event Event
@@ -278,18 +313,23 @@ func parseEvent(message string) (*Event, error) {
 		// Invalid event type
 		// handle the error
 	}
-	return nil, errors.New("Invalid event type")
+	return nil, errors.New("invalid event type")
 }
 
+// Accepts the parsed event and depending on the type of the event, sends event
+// to the user channels associated with the user clients which should be notified
+// for a particular event.
 func processEvent(event Event, userEventChannels map[int]chan Event, followersMap map[int]map[int]bool) {
 	et := event.eventType
 	switch et {
 	case "F":
 		// Follow event
+		// Get the existing followers of the user.
 		f, exists := followersMap[event.toUserId]
 		if !exists {
 			f = make(map[int]bool)
 		}
+		// Add a new follower to the list of followers and save it in followersMap.
 		f[event.fromUserId] = true
 		followersMap[event.toUserId] = f
 		// Send event to the channel assigned for user event.toUserId.
@@ -298,6 +338,7 @@ func processEvent(event Event, userEventChannels map[int]chan Event, followersMa
 		}
 	case "U":
 		// Unfollow event
+		// Get all the followers of the user and delete entry for toUserId.
 		f, exists := followersMap[event.toUserId]
 		if exists {
 			delete(f, event.fromUserId)
@@ -328,6 +369,10 @@ func processEvent(event Event, userEventChannels map[int]chan Event, followersMa
 	}
 }
 
+// Accepts connection for new user clients and starts listening for their
+// first message in a go routine. The read message contains the userId of
+// the user a client represents. After a userId is read, the UserClient
+// is sent to the users channel which was created using handler().
 func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserClient) {
 	for {
 		conn, err := listener.Accept()
@@ -345,12 +390,14 @@ func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserCli
 			message, err := bufio.NewReader(conn).ReadString('\n')
 			if err != nil {
 				// handle the error
+				return
 			}
 			message = strings.Trim(message, "\n")
 			message = strings.Trim(message, "\r")
 			userId, err := strconv.Atoi(message)
 			if err != nil {
 				// handle the error
+				return
 			}
 			uc := UserClient{
 				userId: userId,
@@ -358,5 +405,25 @@ func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserCli
 			}
 			usersChan <- uc
 		}()
+	}
+}
+
+func main() {
+	es, err := startServer()
+	if err != nil {
+		// handle the error
+		os.Exit(1)
+	}
+
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	for _ = range signalChan {
+		err := es.stop()
+		if err != nil {
+			// handle the error
+			os.Exit(1)
+		}
+		signal.Stop(signalChan)
+		os.Exit(0)
 	}
 }
