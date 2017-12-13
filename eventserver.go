@@ -1,4 +1,6 @@
-package eventserver
+// Command eventserver is a socker server which reads events from an event
+// source and forwards them to the user clients when appropriate.
+package main
 
 import (
 	"bufio"
