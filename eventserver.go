@@ -86,7 +86,7 @@ func startServer() (*EventServer, error) {
 // If server is running, it will close the quit channel, hence signalling
 // to all the running go routines to quit and also close the listeners for
 // the event source and the user clients.
-func (e *EventServer) stop() error {
+func (e *EventServer) gracefulStop() error {
 	if !e.hasStopped {
 		return errors.New("event server has already been stopped")
 	}
@@ -419,15 +419,15 @@ func main() {
 	}
 
 	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
+	signal.Notify(signalChan, os.Interrupt, os.Kill)
 
 	// Wait for a signal on this channel.
 	<-signalChan
-	err = es.stop()
+	// Once a signal is received on signalChan, stop the server gracefully.
+	err = es.gracefulStop()
 	if err != nil {
 		// handle the error
 		os.Exit(1)
 	}
 	signal.Stop(signalChan)
-	os.Exit(0)
 }
