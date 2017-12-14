@@ -48,24 +48,20 @@ func startServer() (*EventServer, error) {
 	// Read server configuration from local config.json
 	serverConfig, err := config.LoadEventServerConfig("./config/config.json")
 	if err != nil {
-		// handle the error
 		return nil, err
 	}
 
 	eventsChan, usersChan, err := backgroundWorkerInit(quit)
 	if err != nil {
-		// handle the error
 		return nil, err
 	}
 
 	es, err := net.Listen("tcp", ":"+strconv.Itoa((*serverConfig).EventListenerPort))
 	if err != nil {
-		// handle the error
 		return nil, err
 	}
 	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*serverConfig).ClientListenerPort))
 	if err != nil {
-		// handle the error
 		return nil, err
 	}
 
@@ -240,7 +236,6 @@ func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event
 // Reads the event message string and parses it into Event struct.
 // Parse the payload and sequence first and then parse the fromUserId and
 // toUserId depending on the type of the event (F|U|B|P|S).
-// TODO (sahildua2305): add better error handling for invalid event messages.
 func parseEvent(message string) (*Event, error) {
 	var event Event
 	var err error
@@ -248,37 +243,72 @@ func parseEvent(message string) (*Event, error) {
 	event.payload = message
 	ev := strings.Split(message, "|")
 	if len(ev) < 2 || len(ev) > 4 {
-		return nil, errors.New("Invalid event message")
+		return nil, errors.New("invalid event message")
 	}
 	event.sequence, err = strconv.Atoi(ev[0])
 	if err != nil {
-		// handle error
+		return nil, err
+		return nil, errors.New("couldn't get event sequence from message")
 	}
 	event.eventType = ev[1]
 	switch event.eventType {
 	case "F":
 		// Follow event
-		event.fromUserId, _ = strconv.Atoi(ev[2])
-		event.toUserId, _ = strconv.Atoi(ev[3])
+		if len(ev) != 4 {
+			return nil, errors.New("received follow(F) event message of wrong format")
+		}
+		event.fromUserId, err = strconv.Atoi(ev[2])
+		if err != nil {
+			return nil, errors.New("received follow(F) event message with invalid fromUserId")
+		}
+		event.toUserId, err = strconv.Atoi(ev[3])
+		if err != nil {
+			return nil, errors.New("received follow(F) event message with invalid toUserId")
+		}
 		return &event, nil
 	case "U":
 		// Unfollow event
-		event.fromUserId, _ = strconv.Atoi(ev[2])
-		event.toUserId, _ = strconv.Atoi(ev[3])
+		if len(ev) != 4 {
+			return nil, errors.New("received unfollow(U) event message of wrong format")
+		}
+		event.fromUserId, err = strconv.Atoi(ev[2])
+		if err != nil {
+			return nil, errors.New("received unfollow(U) event message with invalid fromUserId")
+		}
+		event.toUserId, err = strconv.Atoi(ev[3])
+		if err != nil {
+			return nil, errors.New("received unfollow(U) event message with invalid toUserId")
+		}
 		return &event, nil
 	case "B":
 		// Broadcast message event
-		event.fromUserId = 0
-		event.toUserId = 0
+		if len(ev) != 2 {
+			return nil, errors.New("received broadcast(B) event message of wrong format")
+		}
 		return &event, nil
 	case "P":
 		// Private message event
-		event.fromUserId, _ = strconv.Atoi(ev[2])
-		event.toUserId, _ = strconv.Atoi(ev[3])
+		if len(ev) != 4 {
+			return nil, errors.New("received private(P) event message of wrong format")
+		}
+		event.fromUserId, err = strconv.Atoi(ev[2])
+		if err != nil {
+			return nil, errors.New("received private(P) event message with invalid fromUserId")
+		}
+		event.toUserId, err = strconv.Atoi(ev[3])
+		if err != nil {
+			return nil, errors.New("received private(P) event message with invalid toUserId")
+		}
 		return &event, nil
 	case "S":
 		// Status update event
-		event.fromUserId, _ = strconv.Atoi(ev[2])
+		if len(ev) != 3 {
+			return nil, errors.New("received status(S) event message of wrong format")
+		}
+		event.fromUserId, err = strconv.Atoi(ev[2])
+		if err != nil {
+			return nil, errors.New("received status(S) event message with invalid fromUserId")
+		}
 		event.toUserId = 0
 		return &event, nil
 	default:
