@@ -4,15 +4,15 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
+
+	"github.com/sahildua2305/go-eventserver/config"
 )
 
 var currentEventSequence int
@@ -23,12 +23,6 @@ type EventServer struct {
 	ucListener net.Listener
 	hasStopped bool
 	quit       chan struct{}
-}
-
-// EventServerConfig represents the default configuration of the server
-type EventServerConfig struct {
-	EventListenerPort  int `json:"eventListenerPort"`
-	ClientListenerPort int `json:"clientListenerPort"`
 }
 
 // Event represents an event struct as received by the event source
@@ -52,24 +46,24 @@ func startServer() (*EventServer, error) {
 	currentEventSequence = 1
 
 	// Read server configuration from local config.json
-	config, err := loadDefaultJsonConfig("./config.json")
+	serverConfig, err := config.LoadEventServerConfig("./config/config.json")
 	if err != nil {
 		// handle the error
 		return nil, err
 	}
 
-	eventsChan, usersChan, err := handler(quit)
+	eventsChan, usersChan, err := backgroundWorkerInit(quit)
 	if err != nil {
 		// handle the error
 		return nil, err
 	}
 
-	es, err := net.Listen("tcp", ":"+strconv.Itoa((*config).EventListenerPort))
+	es, err := net.Listen("tcp", ":"+strconv.Itoa((*serverConfig).EventListenerPort))
 	if err != nil {
 		// handle the error
 		return nil, err
 	}
-	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*config).ClientListenerPort))
+	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*serverConfig).ClientListenerPort))
 	if err != nil {
 		// handle the error
 		return nil, err
@@ -97,26 +91,8 @@ func (e *EventServer) gracefulStop() error {
 	return nil
 }
 
-func loadDefaultJsonConfig(filePath string) (*EventServerConfig, error) {
-	byteData, err := ioutil.ReadFile(filePath)
-	if err != nil {
-		// handle the error
-		return nil, errors.New("Unable to read the config file")
-	}
-
-	var config EventServerConfig
-	// Here, we unmarshal our byteData which contains
-	// jsonFile's contents into 'config'.
-	err = json.Unmarshal(byteData, &config)
-	if err != nil {
-		// handle the error
-		return nil, errors.New("Unable to parse the JSON file")
-	}
-	return &config, nil
-}
-
-// Handler function which initializes a new go routine to run in background.
-// The go routine is mainly used to separate the two operations:
+// backgroundWorkerInit function which initializes a new go routine to run in
+// background. The go routine is mainly used to separate the two operations:
 // - processing the received events
 // - storing new user client connections
 //
@@ -125,9 +101,9 @@ func loadDefaultJsonConfig(filePath string) (*EventServerConfig, error) {
 // event writing part followed by the event processing. However, that would
 // be vulnerable to race conditions.
 //
-// We need this handler function to avoid the race conditions between processing
+// We need this function to avoid the race conditions between processing
 // the incoming events and the receiving new user clients.
-func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error) {
+func backgroundWorkerInit(quit chan struct{}) (chan<- Event, chan<- UserClient, error) {
 	// Channel to keep incoming events.
 	eventsChan := make(chan Event)
 	// Channel to keep the incoming user clients.
@@ -223,7 +199,7 @@ func handler(quit chan struct{}) (chan<- Event, chan<- UserClient, error) {
 
 // Accepts connection for event source and starts listening for events
 // in a go routine. The read event is then sent to the events channel
-// created by handler() to process in correct order of sequence number.
+// created by backgroundWorkerInit() to process in correct order of sequence number.
 func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event) {
 	for {
 		conn, err := listener.Accept()
@@ -376,7 +352,7 @@ func writeEvent(uc UserClient, ev Event) {
 // Accepts connection for new user clients and starts listening for their
 // first message in a go routine. The read message contains the userId of
 // the user a client represents. After a userId is read, the UserClient
-// is sent to the users channel which was created using handler().
+// is sent to the users channel which was created using backgroundWorkerInit().
 func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserClient) {
 	for {
 		conn, err := listener.Accept()
@@ -415,6 +391,7 @@ func main() {
 	es, err := startServer()
 	if err != nil {
 		// handle the error
+		fmt.Printf("unable to start the server")
 		os.Exit(1)
 	}
 
