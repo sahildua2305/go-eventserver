@@ -1,9 +1,9 @@
 package config
 
 import (
-	"io/ioutil"
 	"encoding/json"
 	"errors"
+	"io/ioutil"
 )
 
 // EventServerConfig represents the default configuration of the server

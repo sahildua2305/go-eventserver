@@ -1,14 +1,20 @@
 package config_test
 
 import (
-	"testing"
 	"github.com/sahildua2305/go-eventserver/config"
+	"reflect"
+	"testing"
 )
 
 func TestLoadEventServerConfig_validConfig(t *testing.T) {
-	_, err := config.LoadEventServerConfig("./testdata/config_valid.json")
+	got, err := config.LoadEventServerConfig("./testdata/config_valid.json")
 	if err != nil {
 		t.Error("Config is found to be invalid, expected to be valid.")
+	}
+
+	want := &config.EventServerConfig{ClientListenerPort: 9099, EventListenerPort: 9090}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Incorrect config returned, want: %+v, got: %+v", want, got)
 	}
 }
 
