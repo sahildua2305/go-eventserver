@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/sahildua2305/go-eventserver/config"
+	"io"
 )
 
 var currentEventSequence int
@@ -40,35 +41,31 @@ type UserClient struct {
 	conn   net.Conn
 }
 
-func startServer() (*EventServer, error) {
+func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 	quit := make(chan struct{})
 
 	currentEventSequence = 1
-
-	// Read server configuration from local config.json
-	serverConfig, err := config.LoadEventServerConfig("./config/config.json")
-	if err != nil {
-		return nil, err
-	}
 
 	eventsChan, usersChan, err := backgroundWorkerInit(quit)
 	if err != nil {
 		return nil, err
 	}
 
-	es, err := net.Listen("tcp", ":"+strconv.Itoa((*serverConfig).EventListenerPort))
+	es, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).EventListenerPort))
 	if err != nil {
+		recover()
 		return nil, err
 	}
-	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*serverConfig).ClientListenerPort))
+	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).ClientListenerPort))
 	if err != nil {
+		recover()
 		return nil, err
 	}
 
 	go acceptEventSourceConnections(es, eventsChan)
 	go acceptUserClientConnections(uc, usersChan)
 
-	return &EventServer{esListener: es, ucListener: uc, hasStopped: true, quit: quit}, nil
+	return &EventServer{esListener: es, ucListener: uc, hasStopped: false, quit: quit}, nil
 }
 
 // Function to stop the running event server **gracefully**.
@@ -77,11 +74,14 @@ func startServer() (*EventServer, error) {
 // to all the running go routines to quit and also close the listeners for
 // the event source and the user clients.
 func (e *EventServer) gracefulStop() error {
-	if !e.hasStopped {
+	if e == nil {
+		return errors.New("invalid event server passed")
+	}
+	if e.hasStopped {
 		return errors.New("event server has already been stopped")
 	}
 	close(e.quit) // close the quit channel
-	e.hasStopped = false
+	e.hasStopped = true
 	e.esListener.Close() // close the event source listener
 	e.ucListener.Close() // close the user clients listener
 	return nil
@@ -199,10 +199,11 @@ func backgroundWorkerInit(quit chan struct{}) (chan<- Event, chan<- UserClient, 
 func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event) {
 	for {
 		conn, err := listener.Accept()
-		defer conn.Close()
 		if err != nil {
-			// handle error
+			// handle the error
+			continue
 		}
+		defer conn.Close()
 
 		// Once the event source has connected, start listening to the events
 		// in a go routine and perform these actions:
@@ -216,7 +217,12 @@ func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event
 				message, err := r.ReadString('\n')
 				if err != nil {
 					// handle the error
-					break
+					if err == io.EOF {
+						fmt.Println("End of event stream")
+						return
+					}
+					fmt.Println(err)
+					return
 				}
 				// Clean/trim the message.
 				message = strings.Trim(message, "\n")
@@ -361,9 +367,6 @@ func processEvent(event Event, userEventChannels map[int]chan Event, followersMa
 				uec <- event
 			}
 		}
-	default:
-		// Invalid event type
-		// handle error
 	}
 }
 
@@ -383,10 +386,10 @@ func writeEvent(uc UserClient, ev Event) {
 func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserClient) {
 	for {
 		conn, err := listener.Accept()
-		defer conn.Close()
 		if err != nil {
-			// handle error
+			continue
 		}
+		defer conn.Close()
 
 		// Once a user client has connected, we go into a go routine to
 		// read the message from the client which will contain the userId
@@ -415,7 +418,14 @@ func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserCli
 }
 
 func main() {
-	es, err := startServer()
+	// Read server configuration from local config.json
+	cfg, err := config.LoadEventServerConfig("./config/config.json")
+	if err != nil {
+		// handle the error
+		os.Exit(1)
+	}
+
+	es, err := startServer(cfg)
 	if err != nil {
 		// handle the error
 		fmt.Printf("unable to start the server")
