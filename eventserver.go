@@ -311,9 +311,6 @@ func parseEvent(message string) (*Event, error) {
 		}
 		event.toUserId = 0
 		return &event, nil
-	default:
-		// Invalid event type
-		// handle the error
 	}
 	return nil, errors.New("invalid event type")
 }

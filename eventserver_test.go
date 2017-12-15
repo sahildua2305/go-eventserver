@@ -13,6 +13,7 @@ func TestParseEvent(t *testing.T) {
 		"|":             false,
 		"12|||":         false,
 		"|||":           false,
+		"1|L|2|3":       false,
 
 		// Follow message cases
 		"12|F|21212|31212":                   true,
