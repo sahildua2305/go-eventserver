@@ -254,7 +254,6 @@ func listenForEventSource(listener net.Listener, eventsChan chan<- Event, quit <
 					if err != nil {
 						// handle the error
 						if err == io.EOF {
-							fmt.Println("End of event stream")
 							return
 						}
 						fmt.Println(err)

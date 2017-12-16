@@ -130,10 +130,7 @@ func TestEventServer_runWithJarHarness(t *testing.T) {
 // Tests the behaviour of server with some raw messages including
 // some bad ones.
 func TestEventServer_withRawEventMessages(t *testing.T) {
-	cfg, err := config.LoadEventServerConfig("./config/testdata/config_valid.json")
-	if err != nil {
-		t.Fatal("Couldn't load server config, got error: ", err)
-	}
+	cfg := &config.EventServerConfig{EventListenerPort: 6060, ClientListenerPort: 6066}
 	es, err := startServer(cfg)
 	if err != nil {
 		t.Fatal("Server couldn't be started, got error:", err)
@@ -172,7 +169,7 @@ func TestEventServer_withRawEventMessages(t *testing.T) {
 // Tests the behaviour when one of the ports is already open and hence,
 // the server can't be started.
 func TestEventServer_alreadyBusyPort(t *testing.T) {
-	cfg := &config.EventServerConfig{EventListenerPort: 8080, ClientListenerPort: 8088}
+	cfg := &config.EventServerConfig{EventListenerPort: 5050, ClientListenerPort: 5055}
 
 	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.EventListenerPort))
 	if err != nil {
