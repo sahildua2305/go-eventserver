@@ -199,3 +199,58 @@ func TestEventServer_alreadyBusyPort(t *testing.T) {
 		t.Error("gracefulStop() ran successfully, expected it to throw error")
 	}
 }
+
+///// Benchmark tests /////
+
+func benchmarkEventServer(args []string, b *testing.B) {
+	// run server with events b.N times
+	for n := 0; n < b.N; n++ {
+		cfg := &config.EventServerConfig{EventListenerPort: 7070, ClientListenerPort: 7077}
+		es, err := startServer(cfg)
+		if err != nil {
+			b.Fatal("Server couldn't be started, got error:", err)
+		}
+		c := exec.Command("time", "java", "-server", "-Xmx1G", "-jar", "./follower-maze-2.0.jar")
+		c.Env = []string{"eventListenerPort=7070", "clientListenerPort=7077"}
+		c.Env = append(c.Env, args...)
+		out, err := c.CombinedOutput()
+		if err != nil {
+			b.Error("Got error: ", err)
+		}
+		if !strings.Contains(string(out), "ALL NOTIFICATIONS RECEIVED") {
+			b.Error("Test failed with jar harness, got incorrect output")
+		}
+		err = es.gracefulStop()
+		if err != nil {
+			b.Error("Server couldn't be stopped gracefully, got error: ", err)
+		}
+	}
+}
+
+func BenchmarkEventServer_1000Events1Batch10ConnectedUsers(b *testing.B) {
+	benchmarkEventServer([]string{"totalEvents=1000", "maxEventSourceBatchSize=1", "concurrencyLevel=10"}, b)
+}
+
+func BenchmarkEventServer_1000Events10Batch10ConnectedUsers(b *testing.B) {
+	benchmarkEventServer([]string{"totalEvents=1000", "maxEventSourceBatchSize=10", "concurrencyLevel=10"}, b)
+}
+
+func BenchmarkEventServer_1000Events100Batch10ConnectedUsers(b *testing.B) {
+	benchmarkEventServer([]string{"totalEvents=1000", "maxEventSourceBatchSize=100", "concurrencyLevel=10"}, b)
+}
+
+func BenchmarkEventServer_10000Events100Batch100ConnectedUsers(b *testing.B) {
+	benchmarkEventServer([]string{"totalEvents=10000", "maxEventSourceBatchSize=100", "concurrencyLevel=100"}, b)
+}
+
+func BenchmarkEventServer_10000Events1000Batch100ConnectedUsers(b *testing.B) {
+	benchmarkEventServer([]string{"totalEvents=10000", "maxEventSourceBatchSize=1000", "concurrencyLevel=100"}, b)
+}
+
+func BenchmarkEventServer_10000Events10000Batch100ConnectedUsers(b *testing.B) {
+	benchmarkEventServer([]string{"totalEvents=10000", "maxEventSourceBatchSize=10000", "concurrencyLevel=100"}, b)
+}
+
+func BenchmarkEventServer_100000Events10000Batch1000ConnectedUsers(b *testing.B) {
+	benchmarkEventServer([]string{"totalEvents=100000", "maxEventSourceBatchSize=10000", "concurrencyLevel=1000"}, b)
+}
