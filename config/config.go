@@ -17,7 +17,6 @@ type EventServerConfig struct {
 func LoadEventServerConfig(filePath string) (*EventServerConfig, error) {
 	byteData, err := ioutil.ReadFile(filePath)
 	if err != nil {
-		// handle the error
 		return nil, errors.New("unable to read the config file")
 	}
 
@@ -25,14 +24,12 @@ func LoadEventServerConfig(filePath string) (*EventServerConfig, error) {
 	// Here, we unmarshal our byteData into 'config'.
 	err = json.Unmarshal(byteData, &config)
 	if err != nil {
-		// handle the error
 		return nil, errors.New("unable to parse the JSON file")
 	}
 
 	// Ensure that the configuration is valid before returning it.
 	err = config.validateConfig()
 	if err != nil {
-		// handle the error
 		return nil, err
 	}
 

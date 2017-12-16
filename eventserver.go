@@ -5,7 +5,6 @@ package main
 import (
 	"bufio"
 	"errors"
-	"fmt"
 	"net"
 	"os"
 	"os/signal"
@@ -14,9 +13,14 @@ import (
 
 	"github.com/sahildua2305/go-eventserver/config"
 	"io"
+	"log"
 )
 
-var currentEventSequence int
+var (
+	currentEventSequence int
+	logInfo *log.Logger
+	logErr  *log.Logger
+)
 
 // EventServer represents the server state
 type EventServer struct {
@@ -41,6 +45,12 @@ type UserClient struct {
 	conn   net.Conn
 }
 
+// Initialize the two log handlers for INFO and ERROR level.
+func init() {
+	logInfo = log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime|log.Lshortfile)
+	logErr = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
+}
+
 func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 	quit := make(chan struct{})
 
@@ -56,16 +66,24 @@ func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 		recover()
 		return nil, err
 	}
+	logInfo.Println("Listening for event source on port:", (*cfg).EventListenerPort)
+
 	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).ClientListenerPort))
 	if err != nil {
 		recover()
 		return nil, err
 	}
+	logInfo.Println("Listening for user clients on port:", (*cfg).ClientListenerPort)
 
 	go listenForEventSource(es, eventsChan, quit)
 	go listenForUserClients(uc, usersChan, quit)
 
-	return &EventServer{esListener: es, ucListener: uc, hasStopped: false, quit: quit}, nil
+	return &EventServer{
+		esListener: es,
+		ucListener: uc,
+		hasStopped: false,
+		quit: quit,
+	}, nil
 }
 
 // Function to stop the running event server **gracefully**.
@@ -82,14 +100,8 @@ func (e *EventServer) gracefulStop() error {
 	}
 	close(e.quit) // close the quit channel
 	e.hasStopped = true
-	// close the event source listener
-	if err := e.esListener.Close(); err != nil {
-		return err
-	}
-	// close the user clients listener
-	if err := e.ucListener.Close(); err != nil {
-		return err
-	}
+	e.esListener.Close() // close the event source listener
+	e.ucListener.Close() // close the user clients listener
 	return nil
 }
 
@@ -196,8 +208,7 @@ func waitForEvent(uc UserClient, userEventChan <-chan Event, quit <-chan struct{
 func writeEvent(uc UserClient, ev Event) {
 	_, err := uc.conn.Write([]byte(ev.payload + "\r\n"))
 	if err != nil {
-		// handle the error
-		fmt.Printf("Unable to write to user %v\n", uc.userId)
+		logErr.Println("Unable to write to user:", uc.userId)
 	}
 }
 
@@ -235,10 +246,7 @@ func listenForEventSource(listener net.Listener, eventsChan chan<- Event, quit <
 		// - connChan: when a new connection is accepted.
 		select {
 		case <-quit:
-			err := listener.Close()
-			if err != nil {
-				//handle the error
-			}
+			listener.Close()
 			return
 		case conn := <-connChan:
 			// Once the event source has connected, start listening to the events
@@ -252,11 +260,11 @@ func listenForEventSource(listener net.Listener, eventsChan chan<- Event, quit <
 					// Read new event message from the event source
 					message, err := r.ReadString('\n')
 					if err != nil {
-						// handle the error
 						if err == io.EOF {
+							logInfo.Println("End of messages from event source, got EOF")
 							return
 						}
-						fmt.Println(err)
+						logErr.Println("Unable to read from event source, got error:", err)
 						return
 					}
 					// Clean/trim the message.
@@ -280,7 +288,6 @@ func listenForEventSource(listener net.Listener, eventsChan chan<- Event, quit <
 func acceptConnAndSendToChan(listener net.Listener, connChan chan<- net.Conn) {
 	conn, err := listener.Accept()
 	if err != nil {
-		// handle the error
 		return
 	}
 	connChan <- conn
@@ -296,6 +303,7 @@ func parseEvent(message string) (*Event, error) {
 	event.payload = message
 	ev := strings.Split(message, "|")
 	if len(ev) < 2 || len(ev) > 4 {
+
 		return nil, errors.New("invalid event message")
 	}
 	event.sequence, err = strconv.Atoi(ev[0])
@@ -432,10 +440,7 @@ func listenForUserClients(listener net.Listener, usersChan chan<- UserClient, qu
 
 		select {
 		case <-quit:
-			err := listener.Close()
-			if err != nil {
-				// handle the error
-			}
+			listener.Close()
 			return
 		case conn := <-connChan:
 			// Once a user client has connected, we go into a go routine to
@@ -446,7 +451,7 @@ func listenForUserClients(listener net.Listener, usersChan chan<- UserClient, qu
 			go func() {
 				userId, err := readAndParseUserId(conn)
 				if err != nil {
-					// handle the error
+					logErr.Println("Unable to receive user id from the client, got error:", err)
 					return
 				}
 				// Send this user client to usersChan which we created in the
@@ -466,14 +471,12 @@ func listenForUserClients(listener net.Listener, usersChan chan<- UserClient, qu
 func readAndParseUserId(conn net.Conn) (*int, error) {
 	m, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
-		// handle the error
 		return nil, err
 	}
 	m = strings.Trim(m, "\n")
 	m = strings.Trim(m, "\r")
 	userId, err := strconv.Atoi(m)
 	if err != nil {
-		// handle the error
 		return nil, err
 	}
 	return &userId, nil
@@ -483,16 +486,17 @@ func main() {
 	// Read server configuration from local config.json
 	cfg, err := config.LoadEventServerConfig("./config/config.json")
 	if err != nil {
-		// handle the error
+		logErr.Println("Unable to load server config, got error:", err)
 		os.Exit(1)
 	}
+	logInfo.Println("Loaded the event server config")
 
 	es, err := startServer(cfg)
 	if err != nil {
-		// handle the error
-		fmt.Printf("unable to start the server")
+		logErr.Println("Unable to start the server, got error:", err)
 		os.Exit(1)
 	}
+	logInfo.Println("Started the event server")
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt, os.Kill)
@@ -500,10 +504,12 @@ func main() {
 	// Wait for a signal on this channel.
 	<-signalChan
 	// Once a signal is received on signalChan, stop the server gracefully.
+	logInfo.Println("Stopping the event server gracefully")
 	err = es.gracefulStop()
 	if err != nil {
-		// handle the error
+		logErr.Println("Unable to stop the server gracefully, got error:", err)
 		os.Exit(1)
 	}
 	signal.Stop(signalChan)
+	logInfo.Println("Exiting event server!")
 }
