@@ -105,24 +105,25 @@ func TestEventServer_startAndStop(t *testing.T) {
 	}
 }
 
+// Tests the event server with the given jar test program for 1000 events.
 func TestEventServer_runWithJarHarness(t *testing.T) {
-	cfg, err := config.LoadEventServerConfig("./config/testdata/config_valid.json")
-	if err != nil {
-		t.Error("Couldn't load server config, got error: ", err)
-	}
+	cfg := &config.EventServerConfig{EventListenerPort: 8080, ClientListenerPort: 8088}
 	es, err := startServer(cfg)
 	if err != nil {
 		t.Fatal("Server couldn't be started, got error: ", err)
 	}
-	defer es.gracefulStop()
 	c := exec.Command("time", "java", "-server", "-Xmx1G", "-jar", "./follower-maze-2.0.jar")
-	c.Env = []string{"totalEvents=1000"}
+	c.Env = []string{"totalEvents=1000", "eventListenerPort=8080", "clientListenerPort=8088"}
 	out, err := c.CombinedOutput()
 	if err != nil {
 		t.Error("Got error: ", err)
 	}
 	if !strings.Contains(string(out), "ALL NOTIFICATIONS RECEIVED") {
 		t.Error("Test failed with jar harness, got incorrect output")
+	}
+	err = es.gracefulStop()
+	if err != nil {
+		t.Error("Server couldn't be stopped gracefully, got error: ", err)
 	}
 }
 
@@ -135,7 +136,7 @@ func TestEventServer_withRawEventMessages(t *testing.T) {
 	}
 	es, err := startServer(cfg)
 	if err != nil {
-		t.Fatal("Server couldn't be started, got error: ", err)
+		t.Fatal("Server couldn't be started, got error:", err)
 	}
 
 	conn, err := net.Dial("tcp", "localhost:"+strconv.Itoa(cfg.EventListenerPort))
@@ -171,13 +172,11 @@ func TestEventServer_withRawEventMessages(t *testing.T) {
 // Tests the behaviour when one of the ports is already open and hence,
 // the server can't be started.
 func TestEventServer_alreadyBusyPort(t *testing.T) {
-	cfg, err := config.LoadEventServerConfig("./config/testdata/config_valid.json")
-	if err != nil {
-		t.Error("Couldn't load server config, got error: ", err)
-	}
+	cfg := &config.EventServerConfig{EventListenerPort: 8080, ClientListenerPort: 8088}
+
 	listener, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.EventListenerPort))
 	if err != nil {
-		t.Error("Couldn't open port for event source, got error: ", err)
+		t.Fatal("Couldn't open port for event source, got error: ", err)
 	}
 	es, err := startServer(cfg)
 	if err == nil {

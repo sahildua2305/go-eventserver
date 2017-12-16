@@ -62,8 +62,8 @@ func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 		return nil, err
 	}
 
-	go acceptEventSourceConnections(es, eventsChan)
-	go acceptUserClientConnections(uc, usersChan)
+	go listenForEventSource(es, eventsChan, quit)
+	go listenForUserClients(uc, usersChan, quit)
 
 	return &EventServer{esListener: es, ucListener: uc, hasStopped: false, quit: quit}, nil
 }
@@ -82,8 +82,14 @@ func (e *EventServer) gracefulStop() error {
 	}
 	close(e.quit) // close the quit channel
 	e.hasStopped = true
-	e.esListener.Close() // close the event source listener
-	e.ucListener.Close() // close the user clients listener
+	// close the event source listener
+	if err := e.esListener.Close(); err != nil {
+		return err
+	}
+	// close the user clients listener
+	if err := e.ucListener.Close(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -146,27 +152,11 @@ func backgroundWorkerInit(quit chan struct{}) (chan<- Event, chan<- UserClient, 
 			case newUser := <-usersChan:
 				// Create a new channel for sending events for this user
 				userEventChan := make(chan Event, 1)
-
-				go func() {
-					for {
-						// Listen for either an Event on user's assigned Event channel
-						// or something on the quit channel.
-						select {
-						case ev := <-userEventChan:
-							// If some event is received at the user's assigned Event
-							// channel, send it to the user client.
-							writeEvent(newUser, ev)
-						case <-quit:
-							// If there's something sent on quit channel,
-							// end the routine.
-							return
-						}
-					}
-				}()
 				// Store the newly created Event channel against the userId.
 				// This will eventually be used to decide which all channels
 				// should an event be sent to.
 				userEventChannels[newUser.userId] = userEventChan
+				go waitForEvent(newUser, userEventChan, quit)
 
 			// For handling the new incoming events from event source:
 			// Whenever a new event arrives on the channel, we do two things:
@@ -174,69 +164,127 @@ func backgroundWorkerInit(quit chan struct{}) (chan<- Event, chan<- UserClient, 
 			// - Process as many events we can process after arrival of this event.
 			case ev := <-eventsChan:
 				eventsMap[ev.sequence] = ev
-				// Keep processing the events as long as we can. That basically means
-				// that we will keep processing the events in sequence order as long
-				// as we have already received the events. We will stop as we find some
-				// sequence for which event is missing.
-				for {
-					e, ok := eventsMap[currentEventSequence]
-					if !ok {
-						break
-					}
-					delete(eventsMap, e.sequence)
-					processEvent(e, userEventChannels, followersMap)
-					currentEventSequence++
-				}
+				processEventsInOrder(eventsMap, userEventChannels, followersMap)
+
+			case <-quit:
+				return
 			}
 		}
 	}()
 	return eventsChan, usersChan, nil
 }
 
+// Wait for a given user client to receive events on it's assigned events channel.
+func waitForEvent(uc UserClient, userEventChan <-chan Event, quit <-chan struct{}) {
+	for {
+		// Listen for either an Event on user's assigned Event channel
+		// or something on the quit channel.
+		select {
+		case ev := <-userEventChan:
+			// If some event is received at the user's assigned Event
+			// channel, send it to the user client.
+			writeEvent(uc, ev)
+		case <-quit:
+			// If there's something sent on quit channel,
+			// end the routine.
+			return
+		}
+	}
+}
+
+// Writes a given event's payload to a given user's connection.
+func writeEvent(uc UserClient, ev Event) {
+	_, err := uc.conn.Write([]byte(ev.payload + "\r\n"))
+	if err != nil {
+		// handle the error
+		fmt.Printf("Unable to write to user %v\n", uc.userId)
+	}
+}
+
+// Keep processing the events as long as we can. That basically means
+// that we will keep processing the events in sequence order as long
+// as we have already received the events. We will stop as we find some
+// sequence for which event is missing.
+func processEventsInOrder(eventsMap map[int]Event, userEventChannels map[int]chan Event, followersMap map[int]map[int]bool) {
+	for {
+		e, ok := eventsMap[currentEventSequence]
+		if !ok {
+			break
+		}
+		delete(eventsMap, e.sequence)
+		processSingleEvent(e, userEventChannels, followersMap)
+		currentEventSequence++
+	}
+}
+
 // Accepts connection for event source and starts listening for events
 // in a go routine. The read event is then sent to the events channel
 // created by backgroundWorkerInit() to process in correct order of sequence number.
-func acceptEventSourceConnections(listener net.Listener, eventsChan chan<- Event) {
+func listenForEventSource(listener net.Listener, eventsChan chan<- Event, quit <-chan struct{}) {
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			// handle the error
-			continue
-		}
-		defer conn.Close()
+		connChan := make(chan net.Conn, 1)
+		// We have to accept the connections in a different go routine now,
+		// because otherwise we won't be able to quit gracefully from this
+		// routine. To be able to support quit channel functioning, we need
+		// to make everything else in this go routine non-blocking.
+		go acceptConnAndSendToChan(listener, connChan)
 
-		// Once the event source has connected, start listening to the events
-		// in a go routine and perform these actions:
-		// - Read message sent from the event source.
-		// - Parse the event message to form Event struct.
-		// - Send the parsed event to eventsChan.
-		go func() {
-			r := bufio.NewReader(conn)
-			for {
-				// Read new event message from the event source
-				message, err := r.ReadString('\n')
-				if err != nil {
-					// handle the error
-					if err == io.EOF {
-						fmt.Println("End of event stream")
+		// Now since we need to end the go routines when the server is quit,
+		// we need to have this blocking listener for one of the two channels:
+		// - quit: when server is about to quit, close the listener.
+		// - connChan: when a new connection is accepted.
+		select {
+		case <-quit:
+			err := listener.Close()
+			if err != nil {
+				//handle the error
+			}
+			return
+		case conn := <-connChan:
+			// Once the event source has connected, start listening to the events
+			// in a go routine and perform these actions:
+			// - Read message sent from the event source.
+			// - Parse the event message to form Event struct.
+			// - Send the parsed event to eventsChan.
+			go func() {
+				r := bufio.NewReader(conn)
+				for {
+					// Read new event message from the event source
+					message, err := r.ReadString('\n')
+					if err != nil {
+						// handle the error
+						if err == io.EOF {
+							fmt.Println("End of event stream")
+							return
+						}
+						fmt.Println(err)
 						return
 					}
-					fmt.Println(err)
-					return
+					// Clean/trim the message.
+					message = strings.Trim(message, "\n")
+					message = strings.Trim(message, "\r")
+					// Parse the message to form Event struct
+					event, err := parseEvent(message)
+					if err != nil {
+						continue
+					}
+					// Send the parsed event to the eventsChan.
+					eventsChan <- *event
 				}
-				// Clean/trim the message.
-				message = strings.Trim(message, "\n")
-				message = strings.Trim(message, "\r")
-				// Parse the message to form Event struct
-				event, err := parseEvent(message)
-				if err != nil {
-					continue
-				}
-				// Send the parsed event to the eventsChan.
-				eventsChan <- *event
-			}
-		}()
+			}()
+		}
 	}
+}
+
+// Accepts the connections on given listener and sends the connections to
+// the given channel if the connection was successful.
+func acceptConnAndSendToChan(listener net.Listener, connChan chan<- net.Conn) {
+	conn, err := listener.Accept()
+	if err != nil {
+		// handle the error
+		return
+	}
+	connChan <- conn
 }
 
 // Reads the event message string and parses it into Event struct.
@@ -324,7 +372,7 @@ func parseEvent(message string) (*Event, error) {
 // Accepts the parsed event and depending on the type of the event, sends event
 // to the user channels associated with the user clients which should be notified
 // for a particular event.
-func processEvent(event Event, userEventChannels map[int]chan Event, followersMap map[int]map[int]bool) {
+func processSingleEvent(event Event, userEventChannels map[int]chan Event, followersMap map[int]map[int]bool) {
 	switch event.eventType {
 	case "F":
 		// Follow event
@@ -370,51 +418,66 @@ func processEvent(event Event, userEventChannels map[int]chan Event, followersMa
 	}
 }
 
-// Writes a given event's payload to a given user's connection.
-func writeEvent(uc UserClient, ev Event) {
-	_, err := uc.conn.Write([]byte(ev.payload + "\r\n"))
-	if err != nil {
-		// handle the error
-		fmt.Printf("Unable to write to user %v\n", uc.userId)
-	}
-}
-
 // Accepts connection for new user clients and starts listening for their
 // first message in a go routine. The read message contains the userId of
 // the user a client represents. After a userId is read, the UserClient
 // is sent to the users channel which was created using backgroundWorkerInit().
-func acceptUserClientConnections(listener net.Listener, usersChan chan<- UserClient) {
+func listenForUserClients(listener net.Listener, usersChan chan<- UserClient, quit <-chan struct{}) {
 	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			continue
-		}
-		defer conn.Close()
+		connChan := make(chan net.Conn, 1)
+		// We have to accept the connections in a different go routine now,
+		// because otherwise we won't be able to quit gracefully from this
+		// routine. To be able to support quit channel functioning, we need
+		// to make everything else in this go routine non-blocking.
+		go acceptConnAndSendToChan(listener, connChan)
 
-		// Once a user client has connected, we go into a go routine to
-		// read the message from the client which will contain the userId
-		// associated with the client.
-		// We also need to handle the case when we don't receive any message
-		// from the connected client.
-		go func() {
-			message, err := bufio.NewReader(conn).ReadString('\n')
+		select {
+		case <-quit:
+			err := listener.Close()
 			if err != nil {
 				// handle the error
-				return
 			}
-			message = strings.Trim(message, "\n")
-			message = strings.Trim(message, "\r")
-			userId, err := strconv.Atoi(message)
-			if err != nil {
-				// handle the error
-				return
-			}
-			usersChan <- UserClient{
-				userId: userId,
-				conn:   conn,
-			}
-		}()
+			return
+		case conn := <-connChan:
+			// Once a user client has connected, we go into a go routine to
+			// read the message from the client which will contain the userId
+			// associated with the client.
+			// We also need to handle the case when we don't receive any message
+			// from the connected client.
+			go func() {
+				userId, err := readAndParseUserId(conn)
+				if err != nil {
+					// handle the error
+					return
+				}
+				// Send this user client to usersChan which we created in the
+				// background worker.
+				usersChan <- UserClient{
+					userId: *userId,
+					conn:   conn,
+				}
+			}()
+		}
 	}
+}
+
+// Reads the message from user client connection and parses the message
+// to fetch the userId that connection represents.
+// Returns the parsed userId if successful, otherwise error.
+func readAndParseUserId(conn net.Conn) (*int, error) {
+	m, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil {
+		// handle the error
+		return nil, err
+	}
+	m = strings.Trim(m, "\n")
+	m = strings.Trim(m, "\r")
+	userId, err := strconv.Atoi(m)
+	if err != nil {
+		// handle the error
+		return nil, err
+	}
+	return &userId, nil
 }
 
 func main() {
