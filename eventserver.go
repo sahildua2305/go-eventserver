@@ -18,8 +18,8 @@ import (
 
 var (
 	currentEventSequence int
-	logInfo *log.Logger
-	logErr  *log.Logger
+	logInfo              *log.Logger
+	logErr               *log.Logger
 )
 
 // EventServer represents the server state
@@ -82,7 +82,7 @@ func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 		esListener: es,
 		ucListener: uc,
 		hasStopped: false,
-		quit: quit,
+		quit:       quit,
 	}, nil
 }
 
