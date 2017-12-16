@@ -1,3 +1,4 @@
+// Package config manages the config for the eventserver.
 package config
 
 import (
