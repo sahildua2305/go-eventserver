@@ -62,7 +62,9 @@ To format the code during development:
 $ make fmt
 ```
 
-The above command only shows the changes that gofmt tool will like to make.
+By default, the above command is of *dry* nature. It only shows the changes
+that gofmt tool suggests.
+
 To actually make the changes, you need to run:
 ```bash
 $ make fmt-wet
@@ -92,8 +94,12 @@ the following environment variables: *eventListenerPort* and
 
 ## Running in Production
 To run EventServer in production, you can install the versioned binary file
-and run it with the corresponding `./config/config.json` file. The configuration file
-in production should be served using some configuration management tool like
+and run it with the corresponding `./config/config.json` file. It's
+recommended to run the binary wrapped in a service using tools like -
+[supervisord](http://supervisord.org/index.html) or
+[serviced](https://github.com/control-center/serviced).
+
+The configuration file in production should be served using some configuration management tool like
 Puppet or Chef.
 
 ### Server Configuration
@@ -129,17 +135,21 @@ the right order of sequence number.
 
 ## Scope of Improvement
 
-- **Logging**: Logging can be improved. Right now, only the info logs are being sent to
-stdout and the error logs are being sent to stderr. The current implementation
-uses the built-in "log" package. We can use some more mature logging module
-which can support the levelled logging to support different log levels like -
-debug, info, warn, error, fatal.
-- **Monitoring**: The current implementation does not have any kind of monitoring around the
-system. We should have some monitoring to measure how many events we are
-serving, what kind of clients are connecting and if everything is going
-alright with our server. We can keep these monitoring metrics in graphite
-and then use some tools like Bosun to enable alerts in undesirable situations.
-- **Sequence persistence**:
+- **Logging**: Logging can be improved. Right now, only the info logs are
+being sent to stdout and the error logs are being sent to stderr. The current
+implementation uses the built-in "log" package. We can use some more mature
+logging module which can support the levelled logging to support different
+log levels like - debug, info, warn, error, fatal.
+- **Monitoring**: The current implementation does not have any kind of
+monitoring around the system. We should have some monitoring to measure how
+many events we are serving, what kind of clients are connecting and if
+everything is going alright with our server. We can use
+[go-metrics](https://github.com/rcrowley/go-metrics) package. We can keep
+these monitoring metrics in [graphite](https://github.com/cyberdelia/go-metrics-graphite)
+and then use some tools like [Bosun](https://bosun.org/) to enable alerts
+in undesirable situations.
+- **Sequence persistence**: We can implement the offset management similar to
+how Kafka handles it in order to solve the following problems:
   - Make the server recover from the sequence number where it stopped earlier.
 For example - in case something goes wrong with the server and it stops in
 the middle, what happens with the events that it already had received?
