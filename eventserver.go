@@ -377,29 +377,20 @@ func parseEvent(message string) (*event, error) {
 // Converts the splitted event message and converts the User Ids from it.
 // Then fills them into the event struct and returns the final event.
 func fillUserIds(e event, s []string) (*event, error) {
-	fromUserId, toUserId, err := convertUserIds(e.payload, s)
-	if err != nil {
-		return nil, err
-	}
-	e.fromUserId = *fromUserId
-	e.toUserId = *toUserId
-	return &e, nil
-}
-
-// Parses the splitted event message and returns the User Ids from it.
-func convertUserIds(msg string, s []string) (*int, *int, error){
 	if len(s) != 4 {
-		return nil, nil, errors.New("invalid event message format")
+		return nil, errors.New("invalid event message format")
 	}
 	fromUserId, err := strconv.Atoi(s[2])
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	toUserId, err := strconv.Atoi(s[3])
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return &fromUserId, &toUserId, nil
+	e.fromUserId = fromUserId
+	e.toUserId = toUserId
+	return &e, nil
 }
 
 // Accepts the parsed event and depending on the type of the event, sends event
