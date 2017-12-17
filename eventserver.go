@@ -43,13 +43,13 @@ type event struct {
 	payload    string // Raw event message which will be sent to user clients
 	sequence   int    // Sequence number of the event
 	eventType  string // Type of the event among valid types - F, U, B, P, S
-	fromUserId int    // From User Id, meaning depends on the event type
-	toUserId   int    // To User Id, meaning depends on the event type
+	fromUserID int    // From User Id, meaning depends on the event type
+	toUserID   int    // To User Id, meaning depends on the event type
 }
 
 // userClient represents a user client that connects to the server.
 type userClient struct {
-	userId int      // User Id that the user client represents
+	userID int      // User Id that the user client represents
 	conn   net.Conn // Connection object for the user client
 }
 
@@ -141,7 +141,7 @@ func backgroundWorkerInit(quit chan struct{}) (chan<- event, chan<- userClient, 
 	// Channel to keep the incoming user clients.
 	usersChan := make(chan userClient)
 
-	// Map used to store the event channels assigned for each userId.
+	// Map used to store the event channels assigned for each userID.
 	userEventChannels := make(map[int]chan event)
 
 	// Map used to store the events against their sequence number. This map
@@ -179,10 +179,10 @@ func backgroundWorkerInit(quit chan struct{}) (chan<- event, chan<- userClient, 
 				// event to this user client.
 				userEventChan := make(chan event, 1)
 
-				// Store the newly created event channel against the userId.
+				// Store the newly created event channel against the userID.
 				// This will eventually be used to decide which all channels
 				// should an event be sent to.
-				userEventChannels[newUser.userId] = userEventChan
+				userEventChannels[newUser.userID] = userEventChan
 
 				// Wait for incoming events on this user channel.
 				go waitForEvent(newUser, userEventChan, quit)
@@ -227,7 +227,7 @@ func waitForEvent(uc userClient, userEventChan <-chan event, quit <-chan struct{
 func writeEvent(uc userClient, ev event) {
 	_, err := uc.conn.Write([]byte(ev.payload + "\r\n"))
 	if err != nil {
-		logErr.Println("Unable to write to user:", uc.userId)
+		logErr.Println("Unable to write to user:", uc.userID)
 	}
 }
 
@@ -315,8 +315,8 @@ func acceptConnAndSendToChan(listener net.Listener, connChan chan<- net.Conn) {
 }
 
 // Reads the event message string and parses it into event struct.
-// Parse the payload and sequence first and then parse the fromUserId and
-// toUserId depending on the type of the event (F|U|B|P|S).
+// Parse the payload and sequence first and then parse the fromUserID and
+// toUserID depending on the type of the event (F|U|B|P|S).
 func parseEvent(message string) (*event, error) {
 	var e event
 	var err error
@@ -364,11 +364,11 @@ func parseEvent(message string) (*event, error) {
 		if len(ev) != 3 {
 			return nil, errors.New("invalid event message format")
 		}
-		e.fromUserId, err = strconv.Atoi(ev[2])
+		e.fromUserID, err = strconv.Atoi(ev[2])
 		if err != nil {
 			return nil, err
 		}
-		e.toUserId = 0
+		e.toUserID = 0
 		return &e, nil
 	}
 	return nil, errors.New("invalid event type")
@@ -380,16 +380,16 @@ func fillUserIds(e event, s []string) (*event, error) {
 	if len(s) != 4 {
 		return nil, errors.New("invalid event message format")
 	}
-	fromUserId, err := strconv.Atoi(s[2])
+	fromUserID, err := strconv.Atoi(s[2])
 	if err != nil {
 		return nil, err
 	}
-	toUserId, err := strconv.Atoi(s[3])
+	toUserID, err := strconv.Atoi(s[3])
 	if err != nil {
 		return nil, err
 	}
-	e.fromUserId = fromUserId
-	e.toUserId = toUserId
+	e.fromUserID = fromUserID
+	e.toUserID = toUserID
 	return &e, nil
 }
 
@@ -401,22 +401,22 @@ func processSingleEvent(e event, userEventChannels map[int]chan event, followers
 	case "F":
 		// Follow event
 		// Get the existing followers of the user.
-		f, exists := followersMap[e.toUserId]
+		f, exists := followersMap[e.toUserID]
 		if !exists {
 			f = make(map[int]bool)
 		}
 		// Add a new follower to the list of followers and save it in followersMap.
-		f[e.fromUserId] = true
-		followersMap[e.toUserId] = f
-		// Send event to the channel assigned for user event.toUserId.
-		if uec, exists := userEventChannels[e.toUserId]; exists {
+		f[e.fromUserID] = true
+		followersMap[e.toUserID] = f
+		// Send event to the channel assigned for user event.toUserID.
+		if uec, exists := userEventChannels[e.toUserID]; exists {
 			uec <- e
 		}
 	case "U":
 		// Unfollow event
-		// Get all the followers of the user and delete entry for toUserId.
-		if f, exists := followersMap[e.toUserId]; exists {
-			delete(f, e.fromUserId)
+		// Get all the followers of the user and delete entry for toUserID.
+		if f, exists := followersMap[e.toUserID]; exists {
+			delete(f, e.fromUserID)
 		}
 	case "B":
 		// Broadcast message event
@@ -426,13 +426,13 @@ func processSingleEvent(e event, userEventChannels map[int]chan event, followers
 		}
 	case "P":
 		// Private message event
-		// Send event to the channel assigned for user event.toUserId.
-		if uec, exists := userEventChannels[e.toUserId]; exists {
+		// Send event to the channel assigned for user event.toUserID.
+		if uec, exists := userEventChannels[e.toUserID]; exists {
 			uec <- e
 		}
 	case "S":
 		// Status update event
-		for u := range followersMap[e.fromUserId] {
+		for u := range followersMap[e.fromUserID] {
 			// Send event to the channel assigned for every follower
 			if uec, exists := userEventChannels[u]; exists {
 				uec <- e
@@ -442,8 +442,8 @@ func processSingleEvent(e event, userEventChannels map[int]chan event, followers
 }
 
 // Accepts connection for new user clients and starts listening for their
-// first message in a go routine. The read message contains the userId of
-// the user a client represents. After a userId is read, the userClient
+// first message in a go routine. The read message contains the userID of
+// the user a client represents. After a userID is read, the userClient
 // is sent to the users channel which was created using backgroundWorkerInit().
 func listenForUserClients(listener net.Listener, usersChan chan<- userClient, quit <-chan struct{}) {
 	for {
@@ -460,12 +460,12 @@ func listenForUserClients(listener net.Listener, usersChan chan<- userClient, qu
 			return
 		case conn := <-connChan:
 			// Once a user client has connected, we go into a go routine to
-			// read the message from the client which will contain the userId
+			// read the message from the client which will contain the userID
 			// associated with the client.
 			// We also need to handle the case when we don't receive any message
 			// from the connected client.
 			go func() {
-				userId, err := readAndParseUserId(conn)
+				userID, err := readAndParseUserID(conn)
 				if err != nil {
 					logErr.Println("Unable to receive user id from the client, got error:", err)
 					return
@@ -473,7 +473,7 @@ func listenForUserClients(listener net.Listener, usersChan chan<- userClient, qu
 				// Send this user client to usersChan which we created in the
 				// background worker.
 				usersChan <- userClient{
-					userId: *userId,
+					userID: *userID,
 					conn:   conn,
 				}
 			}()
@@ -482,20 +482,20 @@ func listenForUserClients(listener net.Listener, usersChan chan<- userClient, qu
 }
 
 // Reads the message from user client connection and parses the message
-// to fetch the userId that connection represents.
-// Returns the parsed userId if successful, otherwise error.
-func readAndParseUserId(conn net.Conn) (*int, error) {
+// to fetch the userID that connection represents.
+// Returns the parsed userID if successful, otherwise error.
+func readAndParseUserID(conn net.Conn) (*int, error) {
 	m, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
 		return nil, err
 	}
 	m = strings.Trim(m, "\n")
 	m = strings.Trim(m, "\r")
-	userId, err := strconv.Atoi(m)
+	userID, err := strconv.Atoi(m)
 	if err != nil {
 		return nil, err
 	}
-	return &userId, nil
+	return &userID, nil
 }
 
 func main() {

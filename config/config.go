@@ -17,8 +17,8 @@ type EventServerConfig struct {
 	ClientListenerPort int `json:"clientListenerPort"`
 }
 
-// Reads the event server config from the given file path and parses the json
-// into EventServerConfig struct.
+// LoadEventServerConfig reads the event server config from the given file
+// path and parses the json into EventServerConfig struct.
 func LoadEventServerConfig(filePath string) (*EventServerConfig, error) {
 	byteData, err := ioutil.ReadFile(filePath)
 	if err != nil {
