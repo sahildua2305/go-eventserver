@@ -1,10 +1,12 @@
-// Command eventserver is a socker server which reads events from an event
+// Command eventserver is a socket server which reads events from an event
 // source and forwards them to the user clients when appropriate.
 package main
 
 import (
 	"bufio"
 	"errors"
+	"io"
+	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -12,8 +14,6 @@ import (
 	"strings"
 
 	"github.com/sahildua2305/go-eventserver/config"
-	"io"
-	"log"
 )
 
 var (
@@ -22,27 +22,35 @@ var (
 	logErr               *log.Logger
 )
 
-// EventServer represents the server state
+// EventServer represents the server state.
 type EventServer struct {
+	// Listener object listening for event source on EventListenerPort.
 	esListener net.Listener
+
+	// Listener object listening for user clients on ClientListenerPort.
 	ucListener net.Listener
+
+	// Boolean to keep track of the running state of the server.
 	hasStopped bool
-	quit       chan struct{}
+
+	// Channel to support communication with go routines while stopping
+	// the server gracefully.
+	quit chan struct{}
 }
 
-// Event represents an event struct as received by the event source
+// Event represents an event struct as received by the event source.
 type Event struct {
-	payload    string
-	sequence   int
-	eventType  string
-	fromUserId int
-	toUserId   int
+	payload    string // Raw event message which will be sent to user clients
+	sequence   int    // Sequence number of the event
+	eventType  string // Type of the event among valid types - F, U, B, P, S
+	fromUserId int    // From User Id, meaning depends on the event type
+	toUserId   int    // To User Id, meaning depends on the event type
 }
 
-// UserClient represents a user client that connects to the server
+// UserClient represents a user client that connects to the server.
 type UserClient struct {
-	userId int
-	conn   net.Conn
+	userId int      // User Id that the user client represents
+	conn   net.Conn // Connection object for the user client
 }
 
 // Initialize the two log handlers for INFO and ERROR level.
@@ -51,16 +59,22 @@ func init() {
 	logErr = log.New(os.Stderr, "ERROR: ", log.Ldate|log.Ltime|log.Lshortfile)
 }
 
+// Function that acts as the starting of the server.
+// Returns *EventServer pointer reference with all fields set.
 func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 	quit := make(chan struct{})
 
+	// This can probably be taken out of here on config level.
 	currentEventSequence = 1
 
+	// Creates a background worker for handling events processing and new
+	// user client connections.
 	eventsChan, usersChan, err := backgroundWorkerInit(quit)
 	if err != nil {
 		return nil, err
 	}
 
+	// Start listening on EventListenerPort.
 	es, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).EventListenerPort))
 	if err != nil {
 		recover()
@@ -68,6 +82,7 @@ func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 	}
 	logInfo.Println("Listening for event source on port:", (*cfg).EventListenerPort)
 
+	// Start listening on ClientListenerPort.
 	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).ClientListenerPort))
 	if err != nil {
 		recover()
@@ -75,7 +90,9 @@ func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 	}
 	logInfo.Println("Listening for user clients on port:", (*cfg).ClientListenerPort)
 
+	// Go routine to handle event source connections.
 	go listenForEventSource(es, eventsChan, quit)
+	// Go routine to handle user client connections.
 	go listenForUserClients(uc, usersChan, quit)
 
 	return &EventServer{
@@ -89,7 +106,7 @@ func startServer(cfg *config.EventServerConfig) (*EventServer, error) {
 // Function to stop the running event server **gracefully**.
 // In case, the event server has already stopped, this will throw an error.
 // If server is running, it will close the quit channel, hence signalling
-// to all the running go routines to quit and also close the listeners for
+// to all the running go routines to return and also close the listeners for
 // the event source and the user clients.
 func (e *EventServer) gracefulStop() error {
 	if e == nil {
@@ -112,26 +129,30 @@ func (e *EventServer) gracefulStop() error {
 //
 // We could have done this thing in two separate functions keeping the event
 // processing part coupled with the event receiving function and keeping the
-// event writing part followed by the event processing. However, that would
-// be vulnerable to race conditions.
+// user handling part coupled with the function receiving user connections.
+// However, that would be vulnerable to race conditions.
 //
 // We need this function to avoid the race conditions between processing
-// the incoming events and the receiving new user clients.
+// the incoming events and the storing new user clients.
 func backgroundWorkerInit(quit chan struct{}) (chan<- Event, chan<- UserClient, error) {
-	// Channel to keep incoming events.
+	// Channel to keep the incoming events.
 	eventsChan := make(chan Event)
+
 	// Channel to keep the incoming user clients.
 	usersChan := make(chan UserClient)
+
 	// Map used to store the event channels assigned for each userId.
 	userEventChannels := make(map[int]chan Event)
+
 	// Map used to store the Events against their sequence number. This map
 	// is basically used as a queue to make sure we keep adding the new events
-	// to the queue and keep processing as and when we can.
+	// to the queue at proper indices and keep processing as and when we can.
 	// We could have used an actual priority queue here to keep events in
 	// sequence, however, using a map seems to be a reasonably good choice
 	// because we can easily check whether we have an event for a sequence
 	// number or not.
 	eventsMap := make(map[int]Event)
+
 	// Map used to store the followers for every user. Basically, we want to
 	// maintain a list of followers for every user, but then it will be
 	// computationally complex to delete any follower when we get 'Unfollow' event.
@@ -151,60 +172,58 @@ func backgroundWorkerInit(quit chan struct{}) (chan<- Event, chan<- UserClient, 
 	go func() {
 		for {
 			select {
-			// For handling the new connecting users:
-			// Whenever a new user client connects, we will do two things:
-			// - Create a new Event channel for the new user client. This
-			//   channel will be used whenever we want to send any event to
-			//   this user client. This ensures that we don't block the routine
-			//   and can keep dispatching the events to the users in their
-			//   respective channels. Once we have created an Event channel
-			//   for the user, we will start a new go routine which will keep
-			//   listening on that channel for any events sent to it.
-			// - Keep track of the new Event channel assigned to the user.
+			// For handling the new connecting users.
 			case newUser := <-usersChan:
-				// Create a new channel for sending events for this user
+				// Create a new channel for sending events to this user.
+				// This channel will be used whenever we want to send any
+				// event to this user client.
 				userEventChan := make(chan Event, 1)
+
 				// Store the newly created Event channel against the userId.
 				// This will eventually be used to decide which all channels
 				// should an event be sent to.
 				userEventChannels[newUser.userId] = userEventChan
+
+				// Wait for incoming events on this user channel.
 				go waitForEvent(newUser, userEventChan, quit)
 
-			// For handling the new incoming events from event source:
-			// Whenever a new event arrives on the channel, we do two things:
-			// - Add that event to the map against its sequence number.
-			// - Process as many events we can process after arrival of this event.
+			// For handling the new incoming events from event source.
 			case ev := <-eventsChan:
+				// Add that event to the map against its sequence number.
 				eventsMap[ev.sequence] = ev
+
+				// Process as many events we can process after arrival of this event.
 				processEventsInOrder(eventsMap, userEventChannels, followersMap)
 
+			// For returning from the go routine.
 			case <-quit:
 				return
 			}
 		}
 	}()
+
 	return eventsChan, usersChan, nil
 }
 
-// Wait for a given user client to receive events on it's assigned events channel.
+// Wait for a given user client to receive events on its assigned events channel.
 func waitForEvent(uc UserClient, userEventChan <-chan Event, quit <-chan struct{}) {
 	for {
 		// Listen for either an Event on user's assigned Event channel
 		// or something on the quit channel.
 		select {
+		// For handling the incoming event message.
 		case ev := <-userEventChan:
-			// If some event is received at the user's assigned Event
-			// channel, send it to the user client.
 			writeEvent(uc, ev)
+
+		// For returning from the go routine.
 		case <-quit:
-			// If there's something sent on quit channel,
-			// end the routine.
 			return
 		}
 	}
 }
 
 // Writes a given event's payload to a given user's connection.
+// TODO: It's possible that the given user has disconnected.
 func writeEvent(uc UserClient, ev Event) {
 	_, err := uc.conn.Write([]byte(ev.payload + "\r\n"))
 	if err != nil {
@@ -234,6 +253,7 @@ func processEventsInOrder(eventsMap map[int]Event, userEventChannels map[int]cha
 func listenForEventSource(listener net.Listener, eventsChan chan<- Event, quit <-chan struct{}) {
 	for {
 		connChan := make(chan net.Conn, 1)
+
 		// We have to accept the connections in a different go routine now,
 		// because otherwise we won't be able to quit gracefully from this
 		// routine. To be able to support quit channel functioning, we need
@@ -273,6 +293,7 @@ func listenForEventSource(listener net.Listener, eventsChan chan<- Event, quit <
 					// Parse the message to form Event struct
 					event, err := parseEvent(message)
 					if err != nil {
+						logErr.Println("Error while parsing the event message, got error:", err)
 						continue
 					}
 					// Send the parsed event to the eventsChan.
@@ -303,8 +324,7 @@ func parseEvent(message string) (*Event, error) {
 	event.payload = message
 	ev := strings.Split(message, "|")
 	if len(ev) < 2 || len(ev) > 4 {
-
-		return nil, errors.New("invalid event message")
+		return nil, errors.New("invalid event message format")
 	}
 	event.sequence, err = strconv.Atoi(ev[0])
 	if err != nil {
@@ -404,8 +424,7 @@ func processSingleEvent(event Event, userEventChannels map[int]chan Event, follo
 	case "U":
 		// Unfollow event
 		// Get all the followers of the user and delete entry for toUserId.
-		f, exists := followersMap[event.toUserId]
-		if exists {
+		if f, exists := followersMap[event.toUserId]; exists {
 			delete(f, event.fromUserId)
 		}
 	case "B":
