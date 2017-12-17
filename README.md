@@ -68,6 +68,11 @@ To actually make the changes, you need to run:
 $ make fmt-wet
 ```
 
+To run [`golint`](https://github.com/golang/lint) on the source code:
+```bash
+$ make lint
+```
+
 #### Quick test program
 
 To test the event server with a test program that comes with this repository,
@@ -116,6 +121,8 @@ sent by the *event source* and what they represent:
 |542532\|B      | 542532    | Broadcast    | -            | -          |
 |43\|P\|32\|56  | 43        | Private Msg  | 32           | 56         |
 |634\|S\|32     | 634       | Status Update| 32           | -          |
+
+Please check `instructions.md` to read more about these event types.
 
 Events can come out of order, but clients will always receive the events in
 the right order of sequence number.

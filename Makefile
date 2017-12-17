@@ -20,5 +20,8 @@ fmt:
 fmt-wet:
 	gofmt -w $$(gofmt -l ./)
 
+lint:
+	golint ./...
+
 clean:
 	rm go-eventserver
