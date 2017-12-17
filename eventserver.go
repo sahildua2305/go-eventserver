@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"errors"
+	"flag"
 	"io"
 	"log"
 	"net"
@@ -499,13 +500,16 @@ func readAndParseUserID(conn net.Conn) (*int, error) {
 }
 
 func main() {
+	cfgFile := flag.String("config", "./config/config.json", "path of config file to load")
+	flag.Parse()
+
 	// Read server configuration from local config.json
-	cfg, err := config.LoadEventServerConfig("./config/config.json")
+	cfg, err := config.LoadEventServerConfig(*cfgFile)
 	if err != nil {
 		logErr.Println("Unable to load server config, got error:", err)
 		os.Exit(1)
 	}
-	logInfo.Println("Loaded the event server config")
+	logInfo.Println("Loaded the event server config from:", *cfgFile)
 
 	es, err := startServer(cfg)
 	if err != nil {

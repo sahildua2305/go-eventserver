@@ -94,17 +94,30 @@ the following environment variables: *eventListenerPort* and
 
 ## Running in Production
 To run EventServer in production, you can install the versioned binary file
-and run it with the corresponding `./config/config.json` file. It's
-recommended to run the binary wrapped in a service using tools like -
+and run it with the corresponding `./config/config.json` file.
+
+Event Server accepts the following command line argument(s):
+```
+  -config string
+      config file to load (default "./config/config.json")
+```
+
+To run the compiled binary in production with custom config file:
+```bash
+$ ./go-eventserver -config "/path/to/config/file"
+```
+
+The configuration file in production can be served using some configuration
+management tool like Puppet or Chef.
+
+It's recommended to run the binary wrapped in a service using tools like -
 [supervisord](http://supervisord.org/index.html) or
 [serviced](https://github.com/control-center/serviced).
 
-The configuration file in production should be served using some configuration management tool like
-Puppet or Chef.
-
 ### Server Configuration
 
-You can configure the following parameters of the server:
+You can configure the following parameters of the server by specifying them
+in `config.json` file:
 - **eventListenerPort** - The port used by the event source.
 - **clientListenerPort** - The port used to register clients.
 
