@@ -5,14 +5,14 @@ forwards them to the *user clients* when appropriate.
 
 Check the section "Implementation Details" below for more details.
 
-### Quick Start
+## Quick Start
 Make sure you have a working [Go environment](https://golang.org/doc/install).
 
-#### Dependencies
+### Dependencies
 - Golang 1.8 or later
 - `make` (optional)
 
-#### Steps to install and run the server
+### Steps to install and run the server
 1. Clone the repository into your GOPATH
 1. Go to the project directory:
 `cd $GOPATH/src/github.com/sahildua2305/go-eventserver`
@@ -38,7 +38,7 @@ And then run the binary using:
 $ ./go-eventserver
 ```
 
-#### Running tests
+### Running tests
 
 To run tests for the entire package:
 ```bash
@@ -55,7 +55,7 @@ To run the benchmark tests for the package:
 $ make test-bench
 ```
 
-#### Code formatting
+### Code formatting
 
 To format the code during development:
 ```bash
@@ -73,7 +73,7 @@ To run [`golint`](https://github.com/golang/lint) on the source code:
 $ make lint
 ```
 
-#### Quick test program
+### Quick test program
 
 To test the event server with a test program that comes with this repository,
 run the following command in another terminal:
@@ -90,27 +90,27 @@ the following environment variables: *eventListenerPort* and
 *clientListenerPort*.
 
 
-### Running in Production
+## Running in Production
 To run EventServer in production, you can install the versioned binary file
 and run it with the corresponding `./config/config.json` file. The configuration file
 in production should be served using some configuration management tool like
 Puppet or Chef.
 
-#### Server Configuration
+### Server Configuration
 
 You can configure the following parameters of the server:
 - **eventListenerPort** - The port used by the event source.
 - **clientListenerPort** - The port used to register clients.
 
 
-### Implementation Details
+## Implementation Details
 
 - *event source*: It will send a stream of events which may or may not require
 clients to be notified.
 - *user clients*: Each one representing a specific user, these wait for
 notifications for events which would be relevant to the user they represent.
 
-##### The Events
+#### The Events
 There are five possible events. The table below describe payloads
 sent by the *event source* and what they represent:
 
@@ -127,7 +127,7 @@ Please check `instructions.md` to read more about these event types.
 Events can come out of order, but clients will always receive the events in
 the right order of sequence number.
 
-#### Scope of Improvement
+## Scope of Improvement
 
 - **Logging**: Logging can be improved. Right now, only the info logs are being sent to
 stdout and the error logs are being sent to stderr. The current implementation
