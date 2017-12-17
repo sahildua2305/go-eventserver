@@ -309,71 +309,77 @@ func parseEvent(message string) (*Event, error) {
 	event.sequence, err = strconv.Atoi(ev[0])
 	if err != nil {
 		return nil, err
-		return nil, errors.New("couldn't get event sequence from message")
 	}
 	event.eventType = ev[1]
 	switch event.eventType {
 	case "F":
 		// Follow event
-		if len(ev) != 4 {
-			return nil, errors.New("received follow(F) event message of wrong format")
-		}
-		event.fromUserId, err = strconv.Atoi(ev[2])
+		finalEvent, err := fillUserIds(event, ev)
 		if err != nil {
-			return nil, errors.New("received follow(F) event message with invalid fromUserId")
+			return nil, err
 		}
-		event.toUserId, err = strconv.Atoi(ev[3])
-		if err != nil {
-			return nil, errors.New("received follow(F) event message with invalid toUserId")
-		}
-		return &event, nil
+		return finalEvent, nil
 	case "U":
 		// Unfollow event
-		if len(ev) != 4 {
-			return nil, errors.New("received unfollow(U) event message of wrong format")
-		}
-		event.fromUserId, err = strconv.Atoi(ev[2])
+		finalEvent, err := fillUserIds(event, ev)
 		if err != nil {
-			return nil, errors.New("received unfollow(U) event message with invalid fromUserId")
+			return nil, err
 		}
-		event.toUserId, err = strconv.Atoi(ev[3])
-		if err != nil {
-			return nil, errors.New("received unfollow(U) event message with invalid toUserId")
-		}
-		return &event, nil
+		return finalEvent, nil
 	case "B":
 		// Broadcast message event
 		if len(ev) != 2 {
-			return nil, errors.New("received broadcast(B) event message of wrong format")
+			return nil, errors.New("")
 		}
 		return &event, nil
 	case "P":
 		// Private message event
-		if len(ev) != 4 {
-			return nil, errors.New("received private(P) event message of wrong format")
-		}
-		event.fromUserId, err = strconv.Atoi(ev[2])
+		finalEvent, err := fillUserIds(event, ev)
 		if err != nil {
-			return nil, errors.New("received private(P) event message with invalid fromUserId")
+			return nil, err
 		}
-		event.toUserId, err = strconv.Atoi(ev[3])
-		if err != nil {
-			return nil, errors.New("received private(P) event message with invalid toUserId")
-		}
-		return &event, nil
+		return finalEvent, nil
 	case "S":
 		// Status update event
 		if len(ev) != 3 {
-			return nil, errors.New("received status(S) event message of wrong format")
+			return nil, errors.New("invalid event message format")
 		}
 		event.fromUserId, err = strconv.Atoi(ev[2])
 		if err != nil {
-			return nil, errors.New("received status(S) event message with invalid fromUserId")
+			return nil, err
 		}
 		event.toUserId = 0
 		return &event, nil
 	}
 	return nil, errors.New("invalid event type")
+}
+
+// Converts the splitted event message and converts the User Ids from it.
+// Then fills them into the event struct and returns the final event.
+func fillUserIds(e Event, s []string) (*Event, error) {
+	fromUserId, toUserId, err := convertUserIds(e.payload, s)
+	if err != nil {
+		return nil, err
+	}
+	e.fromUserId = *fromUserId
+	e.toUserId = *toUserId
+	return &e, nil
+}
+
+// Parses the splitted event message and returns the User Ids from it.
+func convertUserIds(msg string, s []string) (*int, *int, error){
+	if len(s) != 4 {
+		return nil, nil, errors.New("invalid event message format")
+	}
+	fromUserId, err := strconv.Atoi(s[2])
+	if err != nil {
+		return nil, nil, err
+	}
+	toUserId, err := strconv.Atoi(s[3])
+	if err != nil {
+		return nil, nil, err
+	}
+	return &fromUserId, &toUserId, nil
 }
 
 // Accepts the parsed event and depending on the type of the event, sends event
