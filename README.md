@@ -3,7 +3,7 @@
 EventServer is a socket server which reads events from an *event source* and
 forwards them to the *user clients* when appropriate.
 
-Check the section "Implementation Details" below for more details.
+Check the section [Implementation Details](#implementation-details) below for more details.
 
 ## Quick Start
 Make sure you have a working [Go environment](https://golang.org/doc/install).
