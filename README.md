@@ -26,7 +26,7 @@ INFO: 2017/12/17 15:00:46 eventserver.go:83: Listening for event source on port:
 INFO: 2017/12/17 15:00:46 eventserver.go:91: Listening for user clients on port: 9099
 INFO: 2017/12/17 15:00:46 eventserver.go:515: Started the event server
 ```
-This means that the server is now running and listening on ports mentioned
+The server is now running and listening on ports mentioned
 in your `config.json` file.
 
 **Note**: If you don't have `make`, you can build the binary using:
