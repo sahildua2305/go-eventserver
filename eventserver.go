@@ -18,7 +18,6 @@ import (
 )
 
 var (
-	currentEventSequence int
 	logInfo              *log.Logger
 	logErr               *log.Logger
 )
@@ -37,6 +36,8 @@ type eventServer struct {
 	// Channel to support communication with go routines while stopping
 	// the server gracefully.
 	quit chan struct{}
+
+	currentEventSequence int
 }
 
 // event represents an event struct as received by the event source.
@@ -65,18 +66,21 @@ func init() {
 func startServer(cfg *config.EventServerConfig) (*eventServer, error) {
 	quit := make(chan struct{})
 
-	// This can probably be taken out of here on config level.
-	currentEventSequence = 1
+	es := &eventServer{
+		currentEventSequence: 1,
+		quit:                 quit,
+		hasStopped:           false,
+	}
 
 	// Creates a background worker for handling events processing and new
 	// user client connections.
-	eventsChan, usersChan, err := backgroundWorkerInit(quit)
+	eventsChan, usersChan, err := es.backgroundWorkerInit(quit)
 	if err != nil {
 		return nil, err
 	}
 
 	// Start listening on EventListenerPort.
-	es, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).EventListenerPort))
+	esl, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).EventListenerPort))
 	if err != nil {
 		recover()
 		return nil, err
@@ -84,7 +88,7 @@ func startServer(cfg *config.EventServerConfig) (*eventServer, error) {
 	logInfo.Println("Listening for event source on port:", (*cfg).EventListenerPort)
 
 	// Start listening on ClientListenerPort.
-	uc, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).ClientListenerPort))
+	ucl, err := net.Listen("tcp", ":"+strconv.Itoa((*cfg).ClientListenerPort))
 	if err != nil {
 		recover()
 		return nil, err
@@ -92,16 +96,13 @@ func startServer(cfg *config.EventServerConfig) (*eventServer, error) {
 	logInfo.Println("Listening for user clients on port:", (*cfg).ClientListenerPort)
 
 	// Go routine to handle event source connections.
-	go listenForEventSource(es, eventsChan, quit)
+	go es.listenForEventSource(esl, eventsChan, quit)
 	// Go routine to handle user client connections.
-	go listenForUserClients(uc, usersChan, quit)
+	go es.listenForUserClients(ucl, usersChan, quit)
 
-	return &eventServer{
-		esListener: es,
-		ucListener: uc,
-		hasStopped: false,
-		quit:       quit,
-	}, nil
+	es.esListener = esl
+	es.ucListener = ucl
+	return es, nil
 }
 
 // Function to stop the running event server **gracefully**.
@@ -135,7 +136,7 @@ func (e *eventServer) gracefulStop() error {
 //
 // We need this function to avoid the race conditions between processing
 // the incoming events and the storing new user clients.
-func backgroundWorkerInit(quit chan struct{}) (chan<- event, chan<- userClient, error) {
+func (es *eventServer)backgroundWorkerInit(quit chan struct{}) (chan<- event, chan<- userClient, error) {
 	// Channel to keep the incoming events.
 	eventsChan := make(chan event)
 
@@ -194,7 +195,7 @@ func backgroundWorkerInit(quit chan struct{}) (chan<- event, chan<- userClient, 
 				eventsMap[ev.sequence] = ev
 
 				// Process as many events we can process after arrival of this event.
-				processEventsInOrder(eventsMap, userEventChannels, followersMap)
+				es.processEventsInOrder(eventsMap, userEventChannels, followersMap)
 
 			// For returning from the go routine.
 			case <-quit:
@@ -236,22 +237,22 @@ func writeEvent(uc userClient, ev event) {
 // that we will keep processing the events in sequence order as long
 // as we have already received the events. We will stop as we find some
 // sequence for which event is missing.
-func processEventsInOrder(eventsMap map[int]event, userEventChannels map[int]chan event, followersMap map[int]map[int]bool) {
+func (es *eventServer)processEventsInOrder(eventsMap map[int]event, userEventChannels map[int]chan event, followersMap map[int]map[int]bool) {
 	for {
-		e, ok := eventsMap[currentEventSequence]
+		e, ok := eventsMap[es.currentEventSequence]
 		if !ok {
 			break
 		}
 		delete(eventsMap, e.sequence)
 		processSingleEvent(e, userEventChannels, followersMap)
-		currentEventSequence++
+		es.currentEventSequence++
 	}
 }
 
 // Accepts connection for event source and starts listening for events
 // in a go routine. The read event is then sent to the events channel
 // created by backgroundWorkerInit() to process in correct order of sequence number.
-func listenForEventSource(listener net.Listener, eventsChan chan<- event, quit <-chan struct{}) {
+func (es *eventServer)listenForEventSource(listener net.Listener, eventsChan chan<- event, quit <-chan struct{}) {
 	for {
 		connChan := make(chan net.Conn, 1)
 
@@ -446,7 +447,7 @@ func processSingleEvent(e event, userEventChannels map[int]chan event, followers
 // first message in a go routine. The read message contains the userID of
 // the user a client represents. After a userID is read, the userClient
 // is sent to the users channel which was created using backgroundWorkerInit().
-func listenForUserClients(listener net.Listener, usersChan chan<- userClient, quit <-chan struct{}) {
+func (es *eventServer)listenForUserClients(listener net.Listener, usersChan chan<- userClient, quit <-chan struct{}) {
 	for {
 		connChan := make(chan net.Conn, 1)
 		// We have to accept the connections in a different go routine now,
