@@ -28,3 +28,6 @@ lint:
 
 clean:
 	rm go-eventserver
+
+harness:
+	./extras/followermaze.sh
