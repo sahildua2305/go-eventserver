@@ -81,7 +81,7 @@ To test the event server with a test program that comes with this repository,
 run the following command in another terminal:
 
 ```bash
-$ ./followermaze.sh
+$ make harness
 ```
 
 This script will initialize a test program which starts sending events.
