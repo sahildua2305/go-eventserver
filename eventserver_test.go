@@ -112,7 +112,7 @@ func TestEventServer_runWithJarHarness(t *testing.T) {
 	if err != nil {
 		t.Fatal("Server couldn't be started, got error: ", err)
 	}
-	c := exec.Command("time", "java", "-server", "-Xmx1G", "-jar", "./follower-maze-2.0.jar")
+	c := exec.Command("time", "java", "-server", "-Xmx1G", "-jar", "./extras/follower-maze-2.0.jar")
 	c.Env = []string{"totalEvents=1000", "eventListenerPort=8080", "clientListenerPort=8088"}
 	out, err := c.CombinedOutput()
 	if err != nil {
@@ -207,7 +207,7 @@ func benchmarkEventServer(args []string, b *testing.B) {
 		if err != nil {
 			b.Fatal("Server couldn't be started, got error:", err)
 		}
-		c := exec.Command("time", "java", "-server", "-Xmx1G", "-jar", "./follower-maze-2.0.jar")
+		c := exec.Command("time", "java", "-server", "-Xmx1G", "-jar", "./extras/follower-maze-2.0.jar")
 		c.Env = []string{"eventListenerPort=7070", "clientListenerPort=7077"}
 		c.Env = append(c.Env, args...)
 		out, err := c.CombinedOutput()
