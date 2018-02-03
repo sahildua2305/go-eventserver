@@ -11,6 +11,9 @@ test:
 test-cover:
 	go test -cover ./...
 
+test-race:
+	go test -race ./...
+
 test-bench:
 	go test -run=XxX -bench=.
 
