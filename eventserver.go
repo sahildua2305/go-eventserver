@@ -507,15 +507,13 @@ func main() {
 	// Read server configuration from local config.json
 	cfg, err := config.LoadEventServerConfig(*cfgFile)
 	if err != nil {
-		logErr.Println("Unable to load server config, got error:", err)
-		os.Exit(1)
+		logErr.Fatalln("Unable to load server config, got error:", err)
 	}
 	logInfo.Println("Loaded the event server config from:", *cfgFile)
 
 	es, err := startServer(cfg)
 	if err != nil {
-		logErr.Println("Unable to start the server, got error:", err)
-		os.Exit(1)
+		logErr.Fatalln("Unable to start the server, got error:", err)
 	}
 	logInfo.Println("Started the event server")
 
@@ -528,8 +526,7 @@ func main() {
 	logInfo.Println("Stopping the event server gracefully")
 	err = es.gracefulStop()
 	if err != nil {
-		logErr.Println("Unable to stop the server gracefully, got error:", err)
-		os.Exit(1)
+		logErr.Fatalln("Unable to stop the server gracefully, got error:", err)
 	}
 	signal.Stop(signalChan)
 	logInfo.Println("Exiting event server!")
