@@ -351,7 +351,7 @@ func parseEvent(message string) (*event, error) {
 	case "B":
 		// Broadcast message event
 		if len(ev) != 2 {
-			return nil, errors.New("")
+			return nil, errors.New("invalid event message format")
 		}
 		return &e, nil
 	case "P":
