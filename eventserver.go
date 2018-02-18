@@ -334,15 +334,8 @@ func parseEvent(message string) (*event, error) {
 	}
 	e.eventType = ev[1]
 	switch e.eventType {
-	case "F":
-		// Follow event
-		finalEvent, err := fillUserIds(e, ev)
-		if err != nil {
-			return nil, err
-		}
-		return finalEvent, nil
-	case "U":
-		// Unfollow event
+	case "F", "U", "P":
+		// Follow / Unfollow / Private event
 		finalEvent, err := fillUserIds(e, ev)
 		if err != nil {
 			return nil, err
@@ -354,13 +347,6 @@ func parseEvent(message string) (*event, error) {
 			return nil, errors.New("invalid event message format")
 		}
 		return &e, nil
-	case "P":
-		// Private message event
-		finalEvent, err := fillUserIds(e, ev)
-		if err != nil {
-			return nil, err
-		}
-		return finalEvent, nil
 	case "S":
 		// Status update event
 		if len(ev) != 3 {
